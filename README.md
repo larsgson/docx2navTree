@@ -6,6 +6,68 @@
 
 A comprehensive automated system to convert Microsoft Word documents into an interactive web-based reader with JSON content backend. Originally created for the Animal Health Handbook, this system can be adapted for any large document with chapter/section structure.
 
+## 🎯 Standalone Chapter Viewer
+
+The `chapter-viewer` directory is a **fully self-contained React application** that can be used independently:
+
+- ✅ **Extract and use separately** - Copy the `chapter-viewer` folder to create your own book viewer
+- ✅ **Reusable for any book** - Just provide your own JSON content
+- ✅ **No dependencies on parent project** - All book data stored within the viewer directory
+- ✅ **Ready to deploy** - Complete standalone web application
+- ✅ **Easy to customize** - Modern React codebase with clear structure
+
+### Using the Viewer Standalone
+
+```bash
+# Copy the viewer to create your own project
+cp -r chapter-viewer my-book-viewer
+cd my-book-viewer
+
+# Add your book content to book_content_json/
+# (Follow the JSON format described in chapter-viewer/README.md)
+
+# Install and run
+pnpm install
+pnpm dev
+```
+
+The viewer becomes a **universal book reader** - perfect for documentation, handbooks, manuals, or any structured content!
+
+See [chapter-viewer/README.md](chapter-viewer/README.md) for detailed standalone usage instructions.
+
+### Distributing Your Book as a Standalone Viewer
+
+After building your book, you can distribute the complete viewer:
+
+```bash
+# Build your book
+make build
+
+# The chapter-viewer directory is now self-contained!
+# Package it for distribution:
+tar -czf my-book-viewer.tar.gz chapter-viewer/
+
+# Or just copy it anywhere:
+cp -r chapter-viewer /path/to/my-book-viewer
+
+# Recipients can use it immediately:
+cd my-book-viewer
+pnpm install
+pnpm dev
+```
+
+The `chapter-viewer` directory contains:
+- ✅ All book content in `book_content_json/`
+- ✅ All images in `book_content_json/chapter_XX/pictures/`
+- ✅ Complete React application
+- ✅ Ready to run with no external dependencies
+
+This makes it perfect for:
+- 📦 Distributing documentation as a web app
+- 🌐 Hosting on GitHub Pages, Netlify, Vercel
+- 💿 Sharing as an offline viewer
+- 📚 Creating multiple book viewers from one codebase
+
 ## Features
 
 - 🚀 **One-command build** - Single `make build` converts entire document
@@ -135,26 +197,25 @@ project-root/
 │
 ├── English HAH Word Apr 6 2024.docx # Source document (not in repo)
 │
-├── book_content_json/               # Generated content (not in repo)
-│   ├── index.json                   # Navigation index
-│   ├── toc_structure.json           # Table of contents
-│   ├── toc_validation_report.json   # TOC validation results
-│   └── chapter_XX/                  # Chapter directories
-│       ├── section_XX.json          # Section content
-│       └── pictures/                # Extracted images
-│           └── image_XXXX.png
-│
 ├── markdown_chapters/               # Markdown export (optional, not in repo)
 │   ├── README.md                    # Navigation index
 │   └── chapter_XX/                  # Chapter directories
 │       ├── section_X_X.md           # Section content
 │       └── pictures/                # Extracted images
 │
-└── chapter-viewer/                  # React web application
+└── chapter-viewer/                  # STANDALONE React web application
+    ├── book_content_json/           # Book data (self-contained!)
+    │   ├── index.json               # Navigation index
+    │   ├── toc_structure.json       # Table of contents
+    │   └── chapter_XX/              # Chapter directories
+    │       ├── chapter.json         # Chapter metadata
+    │       ├── section_XX.json      # Section content
+    │       └── pictures/            # Chapter images
     ├── src/                         # React source code
     ├── public/
-    │   └── book_content_json/       # Deployed content
-    └── package.json
+    │   └── book_content_json/       # Symlink to ../book_content_json/
+    ├── package.json
+    └── README.md                    # Standalone usage guide
 ```
 
 ## Output Format
@@ -369,8 +430,8 @@ ENABLE_TOC_VALIDATION = False
 ### Accessing Validation Reports
 
 After build, check:
-- `book_content_json/toc_validation_report.json` - TOC discrepancies
-- `book_content_json/toc_structure.json` - Extracted TOC
+- `chapter-viewer/book_content_json/toc_validation_report.json` - TOC discrepancies
+- `chapter-viewer/book_content_json/toc_structure.json` - Extracted TOC
 
 ## Documentation
 

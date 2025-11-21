@@ -1,6 +1,78 @@
-# Animal Health Handbook - Chapter Viewer
+# Chapter Viewer - Standalone Book Reader
 
-A modern, mobile-friendly React web application for viewing and navigating the Animal Health Handbook chapters.
+A modern, mobile-friendly React web application for viewing and navigating book chapters. Originally created for the Animal Health Handbook, this viewer is **fully self-contained** and can be used as a standalone project for any book or documentation.
+
+## 📍 Book Data Location
+
+**All book content is stored in `book_content_json/` within this directory.**
+
+This makes the entire `chapter-viewer` folder self-contained and portable. The `public/book_content_json/` is a symlink to `../book_content_json/` for development server access.
+
+```
+chapter-viewer/
+├── book_content_json/          ← Your book data lives here!
+│   ├── index.json
+│   ├── toc_structure.json
+│   └── chapter_XX/
+│       ├── chapter.json
+│       ├── section_XX.json
+│       └── pictures/
+├── public/
+│   └── book_content_json/      ← Symlink to ../book_content_json/
+└── src/
+```
+
+## 🎯 Standalone Usage
+
+This `chapter-viewer` directory is a **complete, independent project** that can be:
+
+- ✅ Extracted and used separately from the parent project
+- ✅ Deployed as its own web application
+- ✅ Used to display any book content (just provide your own JSON data)
+- ✅ Shared, forked, or integrated into other projects
+- ✅ Copied to a new location and it just works!
+
+### Using as a Standalone Viewer
+
+1. **Copy this entire directory** to use it independently:
+   ```bash
+   cp -r chapter-viewer my-book-viewer
+   cd my-book-viewer
+   ```
+
+2. **Your book content is already included!**
+   - All data is in `book_content_json/` 
+   - Images are in `book_content_json/chapter_XX/pictures/`
+   - The symlink in `public/` will work automatically
+
+3. **Install and run**:
+   ```bash
+   pnpm install
+   pnpm dev
+   ```
+
+That's it! You now have a fully functional, self-contained book viewer.
+
+### Adding Your Own Book Content
+
+To use this viewer with your own book:
+
+1. Replace the content in `book_content_json/` with your book's JSON data
+2. Follow the structure described in **Data Format** section below
+3. Place images in `book_content_json/chapter_XX/pictures/`
+4. The `public/book_content_json/` symlink will automatically point to your new content
+
+### Data Format Required
+
+The viewer expects a `book_content_json/` directory with:
+- `index.json` - Chapter list and navigation
+- `toc_structure.json` - Table of contents (optional)
+- `chapter_XX/` folders containing:
+  - `chapter.json` - Chapter metadata
+  - `section_XX.json` - Section content
+  - `pictures/` - Chapter images
+
+See the **Data Format** section below for detailed structure.
 
 ## Features
 

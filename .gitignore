@@ -36,7 +36,6 @@ package-lock.json
 yarn.lock
 
 # Generated Book Content (DO NOT COMMIT)
-book_content_json/
 markdown_chapters/
 chapters/
 *.docx
@@ -45,6 +44,7 @@ chapters/
 # Chapter Viewer Build
 chapter-viewer/dist/
 chapter-viewer/build/
+chapter-viewer/book_content_json/
 chapter-viewer/public/book_content_json/
 
 # Images and Media

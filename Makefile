@@ -7,7 +7,7 @@
 PYTHON := ./venv/bin/python3
 PIP := ./venv/bin/pip
 INPUT_DOCX := English\ HAH\ Word\ Apr\ 6\ 2024.docx
-JSON_DIR := book_content_json
+JSON_DIR := chapter-viewer/book_content_json
 VIEWER_DIR := chapter-viewer
 VIEWER_PUBLIC := $(VIEWER_DIR)/public/book_content_json
 

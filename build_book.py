@@ -38,7 +38,7 @@ from docx.text.paragraph import Paragraph
 # ============================================================================
 
 INPUT_DOCX = "English HAH Word Apr 6 2024.docx"
-JSON_DIR = "book_content_json"
+JSON_DIR = "chapter-viewer/book_content_json"
 VIEWER_PUBLIC_DIR = "chapter-viewer/public/book_content_json"
 ENABLE_OPTIMIZATION = True  # Set to False to skip default value optimization
 ENABLE_TOC_VALIDATION = True  # Set to False to skip TOC validation
@@ -1494,28 +1494,43 @@ def convert_wmf_images():
 
 
 def copy_to_viewer():
-    """Copy JSON content to chapter-viewer public directory."""
+    """Create symlink in chapter-viewer public directory to book_content_json.
+
+    This makes the viewer self-contained with data stored in chapter-viewer/book_content_json
+    and accessible via public/book_content_json symlink.
+    """
 
     if not os.path.exists(JSON_DIR):
         print_error(f"JSON directory not found: {JSON_DIR}")
         return False
 
-    # Create viewer directory
+    # Create viewer public directory if it doesn't exist
+    viewer_public = Path(VIEWER_PUBLIC_DIR).parent
+    viewer_public.mkdir(parents=True, exist_ok=True)
+
     viewer_path = Path(VIEWER_PUBLIC_DIR)
 
-    if viewer_path.exists():
-        print("Removing old chapter-viewer content...")
-        shutil.rmtree(viewer_path)
+    # Remove existing symlink or directory
+    if viewer_path.exists() or viewer_path.is_symlink():
+        if viewer_path.is_symlink():
+            print("Removing old symlink...")
+            viewer_path.unlink()
+        else:
+            print("Removing old chapter-viewer content...")
+            shutil.rmtree(viewer_path)
 
-    print(f"Copying content to {VIEWER_PUBLIC_DIR}...")
+    # Create symlink from public/book_content_json to ../book_content_json
+    print(f"Creating symlink: {VIEWER_PUBLIC_DIR} -> ../book_content_json")
 
-    # Copy entire directory
-    shutil.copytree(JSON_DIR, viewer_path)
+    # Symlink target is relative: ../book_content_json (from public/ to chapter-viewer/)
+    viewer_path.symlink_to("../book_content_json")
 
-    # Count files
-    file_count = sum(1 for _ in viewer_path.rglob("*") if _.is_file())
+    # Count files in the actual data directory
+    json_path = Path(JSON_DIR)
+    file_count = sum(1 for _ in json_path.rglob("*") if _.is_file())
 
-    print_success(f"Copied {file_count} files to chapter-viewer")
+    print_success(f"Symlink created - {file_count} files accessible in viewer")
+    print_info("Chapter-viewer is now self-contained and can be used standalone!")
 
     return True
 
