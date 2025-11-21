@@ -43,8 +43,8 @@ Before contributing, ensure you have:
 1. **Fork the repository**
    ```bash
    # Click "Fork" on GitHub, then clone your fork
-   git clone https://github.com/YOUR_USERNAME/pp-book.git
-   cd pp-book
+   git clone https://github.com/YOUR_USERNAME/docx2app.git
+   cd docx2app
    ```
 
 2. **Install dependencies**

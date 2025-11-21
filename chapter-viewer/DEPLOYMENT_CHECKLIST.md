@@ -24,7 +24,7 @@
 - [ ] Test at different screen sizes (320px, 768px, 1024px, 1920px)
 
 ### ✅ Content Verification
-- [ ] All 28 chapters present in `public/chapters_json/`
+- [ ] All chapters (29) present in `public/book_content_json/`
 - [ ] `index.json` exists and is valid
 - [ ] All chapter JSON files are valid
 - [ ] All images exist in respective `pictures/` folders
@@ -58,21 +58,21 @@
 
 ### Step 1: Prepare Environment
 ```bash
-cd pp-book/chapter-viewer
+cd docx2app/chapter-viewer
 pnpm install
 ```
 
 ### Step 2: Verify Data
 ```bash
-# Check that chapters_json exists
-ls -la public/chapters_json/
+# Check that book_content_json exists
+ls -la public/book_content_json/
 
 # Verify index.json
-cat public/chapters_json/index.json
+cat public/book_content_json/index.json
 
 # Count chapters
-ls public/chapters_json/ | grep chapter_ | wc -l
-# Should show 28
+ls public/book_content_json/ | grep chapter_ | wc -l
+# Should show 29
 ```
 
 ### Step 3: Build
@@ -101,7 +101,7 @@ ls -la dist/
 # Should contain:
 # - index.html
 # - assets/ (JS and CSS files)
-# - chapters_json/ (all chapter data)
+# - book_content_json/ (all chapter data)
 ```
 
 ## Deployment Options
@@ -311,7 +311,7 @@ docker-compose up -d
 ### Images Not Loading
 **Problem**: 404 errors for images  
 **Solution**: 
-- Check `public/chapters_json/` folder structure
+- Check `public/book_content_json/` folder structure
 - Verify image paths in JSON files
 - Ensure images were included in build
 
@@ -345,13 +345,13 @@ docker-compose up -d
 
 ### Content Updates
 When chapters are updated:
-1. Run `split_chapters_to_json.py` to regenerate JSON
-2. Copy updated `chapters_json/` to `public/`
+1. Run `build_book.py` to regenerate JSON
+2. Copy updated `book_content_json/` to `public/`
 3. Rebuild: `pnpm build`
 4. Deploy updated `dist/` folder
 
 ### Backup
-- [ ] Backup `chapters_json/` data regularly
+- [ ] Backup `book_content_json/` data regularly
 - [ ] Keep source .docx files safe
 - [ ] Version control for code (Git)
 - [ ] Document any configuration changes

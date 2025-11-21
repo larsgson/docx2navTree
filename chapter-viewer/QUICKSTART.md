@@ -84,7 +84,7 @@ pnpm dev -- --port 3001
 - Restart dev server
 
 ### Images Not Loading
-- Check that `public/chapters_json` folder exists
+- Check that `public/book_content_json` folder exists
 - Verify image files are in the correct chapter's `pictures` folder
 - Check browser console for 404 errors
 
@@ -121,15 +121,21 @@ pnpm dev -- --port 3001
 
 ## Data Structure
 
-The app reads from `public/chapters_json/`:
+The app reads from `public/book_content_json/`:
 ```
-chapters_json/
-├── index.json              # Chapter list
+book_content_json/
+├── index.json              # Chapter list and navigation
+├── toc_structure.json      # Table of contents
 ├── chapter_01/
-│   ├── chapter.json       # Content
-│   └── pictures/          # Images
+│   ├── chapter.json        # Chapter metadata
+│   ├── section_01.json     # Section 1.1 content
+│   ├── section_02.json     # Section 1.2 content
+│   └── pictures/           # Chapter images
 ├── chapter_02/
+│   ├── chapter.json
+│   ├── section_01.json
 │   └── ...
+└── ...
 ```
 
 ## Support

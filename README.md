@@ -123,7 +123,7 @@ make verify          # Check image integrity and content
 ## Project Structure
 
 ```
-pp-book/
+project-root/
 ├── build_book.py                    # Main build system (JSON output)
 ├── split_chapters.py                # Reference: Split to DOCX chapters
 ├── split_to_md_chapters.py          # Reference: Split to Markdown chapters
@@ -219,7 +219,7 @@ Achieves 47% file size reduction by removing:
 
 **Result:** 12.8 MB → 6.8 MB (6 MB savings)
 
-See [JSON_OPTIMIZATION_GUIDE.md](JSON_OPTIMIZATION_GUIDE.md) for details.
+
 
 ### WMF Image Conversion
 
@@ -374,7 +374,6 @@ After build, check:
 
 ## Documentation
 
-- **[JSON_OPTIMIZATION_GUIDE.md](JSON_OPTIMIZATION_GUIDE.md)** - Optimization details
 - **[WMF_CONVERSION_GUIDE.md](WMF_CONVERSION_GUIDE.md)** - Image conversion guide
 - **[MARKDOWN_EXPORT_GUIDE.md](MARKDOWN_EXPORT_GUIDE.md)** - Markdown export reference guide
 - **[chapter-viewer/README.md](chapter-viewer/README.md)** - Web viewer documentation
