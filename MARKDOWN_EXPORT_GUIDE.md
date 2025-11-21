@@ -11,6 +11,7 @@ The `split_to_md_chapters.py` script is a **reference implementation** that demo
 - **Documentation**: Creating readable documentation from your Word files
 - **Archival**: Storing content in a universal, portable format
 - **Alternative Exports**: Using Markdown as a base for other formats (HTML, PDF, EPUB)
+- **WMF Conversion**: Automatically converts Windows Metafile images to PNG
 
 ## Quick Start
 
@@ -39,6 +40,8 @@ markdown_chapters/
 │   └── pictures/
 │       ├── image_0001.png
 │       ├── image_0002.jpg
+│       ├── image_0008.png           # Converted from WMF
+│       ├── image_0008.wmf.backup    # Original WMF backup
 │       └── ...
 ├── chapter_02/
 │   ├── README.md
@@ -99,8 +102,8 @@ Images are extracted and referenced with proper paths:
 ![Image 1](pictures/image_0001.png)
 ```
 
-- **Supported formats**: PNG, JPG, GIF, WMF
-- **WMF images**: Extracted with a note that conversion may be needed
+- **Supported formats**: PNG, JPG, GIF
+- **WMF images**: Automatically converted to PNG (requires ImageMagick and Ghostscript)
 - **Paths**: Relative to the section file for portability
 
 ### Footnotes
@@ -157,6 +160,7 @@ Use the Markdown files with static site generators:
 | **Tables** | Array of cell objects | Markdown table format |
 | **Images** | Metadata + references | Markdown image links |
 | **Optimization** | 47% size reduction | Full formatting preserved |
+| **WMF Conversion** | Manual (separate step) | Automatic (on-the-fly) |
 | **Use Case** | Chapter viewer app | Reading, learning, docs |
 | **Editable** | Machine-readable | Directly human-editable |
 
@@ -261,16 +265,17 @@ for md_file in Path("markdown_chapters").rglob("*.md"):
 **Problem**: WMF images don't display
 
 **Solutions**:
-1. WMF is a Windows format not supported by most viewers
-2. Convert WMF to PNG using the main build system:
+1. The script automatically converts WMF to PNG if ImageMagick and Ghostscript are installed
+2. If conversion fails, ensure dependencies are installed:
    ```bash
-   make build  # This converts WMF automatically
-   # Then copy PNG images to markdown_chapters/
+   # macOS
+   brew install imagemagick ghostscript
+   
+   # Linux
+   sudo apt-get install imagemagick ghostscript libreoffice
    ```
-3. Or use ImageMagick directly:
-   ```bash
-   convert image.wmf image.png
-   ```
+3. Check the script output for conversion status messages
+4. Original WMF files are backed up as `.wmf.backup`
 
 ### Character Encoding
 

@@ -31,6 +31,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from io import BytesIO
 from pathlib import Path
 
@@ -88,6 +89,111 @@ def print_error(text):
 
 def print_info(text):
     print(f"{Colors.CYAN}ℹ️  {text}{Colors.END}")
+
+
+# ============================================================================
+# Image Conversion Functions (from build_book.py)
+# ============================================================================
+
+
+def check_imagemagick():
+    """Check if ImageMagick is installed."""
+    try:
+        result = subprocess.run(
+            ["convert", "-version"], capture_output=True, text=True, timeout=5
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def check_ghostscript():
+    """Check if Ghostscript is installed."""
+    try:
+        result = subprocess.run(
+            ["gs", "--version"], capture_output=True, text=True, timeout=5
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def check_file_type(filepath):
+    """Check if a file is a Windows Metafile."""
+    try:
+        result = subprocess.run(
+            ["file", "-b", str(filepath)], capture_output=True, text=True, timeout=5
+        )
+        output = result.stdout.strip().lower()
+        return "windows metafile" in output or "wmf" in output
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def convert_wmf_to_png(filepath):
+    """Convert a WMF file to PNG using ImageMagick.
+
+    ImageMagick will automatically handle the conversion chain:
+    WMF -> (LibreOffice) -> PDF -> (Ghostscript) -> PNG
+    """
+    # Use .wmf extension (not .wmf.tmp) so ImageMagick recognizes the format
+    temp_wmf = filepath.parent / f"{filepath.stem}_temp.wmf"
+    temp_png = filepath.parent / f"{filepath.stem}_temp.png"
+
+    try:
+        # Rename file to .wmf extension so ImageMagick recognizes the format
+        shutil.copy2(filepath, temp_wmf)
+
+        # Convert WMF to PNG - ImageMagick handles PDF intermediate automatically
+        result = subprocess.run(
+            ["magick", str(temp_wmf), str(temp_png)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode == 0 and temp_png.exists():
+            # Verify it's actually a PNG
+            check_result = subprocess.run(
+                ["file", "-b", str(temp_png)],
+                capture_output=True,
+                text=True,
+            )
+            if "PNG" not in check_result.stdout:
+                # Not a proper PNG, fail
+                if temp_wmf.exists():
+                    temp_wmf.unlink()
+                if temp_png.exists():
+                    temp_png.unlink()
+                return False
+
+            # Backup original WMF file
+            backup_path = filepath.with_suffix(".wmf.backup")
+            shutil.copy2(filepath, backup_path)
+
+            # Replace with converted PNG
+            shutil.move(str(temp_png), str(filepath))
+
+            # Clean up temp WMF file
+            if temp_wmf.exists():
+                temp_wmf.unlink()
+
+            return True
+        else:
+            # Clean up temp files
+            if temp_wmf.exists():
+                temp_wmf.unlink()
+            if temp_png.exists():
+                temp_png.unlink()
+            return False
+
+    except Exception as e:
+        # Clean up temp files
+        if temp_wmf.exists():
+            temp_wmf.unlink()
+        if temp_png.exists():
+            temp_png.unlink()
+        return False
 
 
 # ============================================================================
@@ -321,16 +427,39 @@ def extract_paragraph_markdown(
                         with open(image_path, "wb") as f:
                             f.write(image_bytes)
 
+                        # Convert WMF to PNG if needed
+                        if ext == "wmf":
+                            image_path_obj = Path(image_path)
+                            print_info(f"    Converting WMF image {image_counter}...")
+                            if convert_wmf_to_png(image_path_obj):
+                                # Rename the converted file from .wmf to .png
+                                png_filename = f"image_{image_counter:04d}.png"
+                                png_path = os.path.join(image_dir, png_filename)
+
+                                # The convert_wmf_to_png replaces the .wmf file with PNG data
+                                # but keeps the .wmf extension, so we need to rename it
+                                if os.path.exists(image_path):
+                                    os.rename(image_path, png_path)
+
+                                # Update filename to PNG
+                                image_filename = png_filename
+                                image_relative_path = f"pictures/{image_filename}"
+                                print_success(
+                                    f"      Converted to PNG: {image_filename}"
+                                )
+                            else:
+                                # Conversion failed, keep as WMF
+                                image_relative_path = f"pictures/{image_filename}"
+                                print_warning(
+                                    f"      WMF conversion failed for {image_filename}"
+                                )
+                        else:
+                            image_relative_path = f"pictures/{image_filename}"
+
                         # Add image reference in Markdown
-                        image_relative_path = f"pictures/{image_filename}"
                         markdown_lines.append(
                             f"\n![Image {image_counter}]({image_relative_path})\n"
                         )
-
-                        if ext == "wmf":
-                            markdown_lines.append(
-                                f"*Note: WMF image - may need conversion for display*\n"
-                            )
 
                         image_counter += 1
 
@@ -448,6 +577,19 @@ def convert_book_to_markdown(input_file, output_dir):
     print_info(f"Input: {input_file}")
     print_info(f"Output: {output_dir}/")
 
+    # Check for ImageMagick (for WMF conversion)
+    has_imagemagick = check_imagemagick()
+    has_ghostscript = check_ghostscript()
+
+    if has_imagemagick and has_ghostscript:
+        print_success("ImageMagick and Ghostscript detected - WMF conversion enabled")
+    elif has_imagemagick:
+        print_warning(
+            "ImageMagick found but Ghostscript missing - WMF conversion may fail"
+        )
+    else:
+        print_warning("ImageMagick not found - WMF images will not be converted")
+
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
@@ -541,6 +683,7 @@ def convert_book_to_markdown(input_file, output_dir):
     total_paragraphs = 0
     total_tables = 0
     total_images = 0
+    total_wmf_converted = 0
 
     for chapter in chapters:
         chapter_num = chapter["number"]
@@ -624,6 +767,10 @@ def convert_book_to_markdown(input_file, output_dir):
             total_tables += table_count
 
         total_images += chapter_image_counter - 1
+
+        # Count WMF conversions in this chapter
+        for image_file in Path(pictures_dir).glob("*.wmf.backup"):
+            total_wmf_converted += 1
 
         # Create chapter index file
         chapter_index_md = []
@@ -722,6 +869,8 @@ def convert_book_to_markdown(input_file, output_dir):
     print_success(f"Total paragraphs: {total_paragraphs}")
     print_success(f"Total tables: {total_tables}")
     print_success(f"Total images: {total_images}")
+    if total_wmf_converted > 0:
+        print_success(f"Converted {total_wmf_converted} WMF images to PNG")
     print_info(f"\nMarkdown files saved to: {output_dir}/")
     print_info("Open README.md to start browsing")
 
