@@ -105,6 +105,7 @@ build: check-deps
 	@echo "  4. Copy content to chapter-viewer"
 	@echo "  5. Build index file"
 	@echo ""
+	@test -f $(INPUT_DOCX) || (echo "$(YELLOW)⚠️  Input file not found: $(INPUT_DOCX)$(NC)" && exit 1)
 	$(PYTHON) build_book.py
 	@echo ""
 	@echo "$(GREEN)✅ Build complete!$(NC)"
@@ -214,7 +215,7 @@ status:
 # Reference script: Split book into DOCX chapters
 split-chapters:
 	@echo "$(BLUE)Splitting book into DOCX chapter files...$(NC)"
-	@[ -f "$(INPUT_DOCX)" ] || \
+	@test -f $(INPUT_DOCX) || \
 		(echo "$(YELLOW)⚠️  Input file not found: $(INPUT_DOCX)$(NC)" && exit 1)
 	$(PYTHON) split_chapters.py
 	@echo "$(GREEN)✅ Chapter files created in chapters/ directory$(NC)"
@@ -222,7 +223,7 @@ split-chapters:
 # Reference script: Convert chapters to Markdown
 split-markdown:
 	@echo "$(BLUE)Converting book to Markdown format...$(NC)"
-	@[ -f "$(INPUT_DOCX)" ] || \
+	@test -f $(INPUT_DOCX) || \
 		(echo "$(YELLOW)⚠️  Input file not found: $(INPUT_DOCX)$(NC)" && exit 1)
 	$(PYTHON) split_to_md_chapters.py
 	@echo "$(GREEN)✅ Markdown files created in markdown_chapters/ directory$(NC)"
