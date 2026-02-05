@@ -576,6 +576,81 @@ def get_document_elements_in_order(doc, toc_end_index):
     # Track image counter
     image_counter = 0
 
+    # XML namespaces
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    wp_ns = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    a_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    r_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    v_ns = "urn:schemas-microsoft-com:vml"
+    o_ns = "urn:schemas-microsoft-com:office:office"
+
+    def _extract_images_from_element(element, para_index):
+        """Extract images from both w:drawing and w:pict elements."""
+        nonlocal image_counter
+        images = []
+
+        # Method 1: Modern drawings (w:drawing > a:blip)
+        for drawing in element.findall(f".//{{{w_ns}}}drawing"):
+            alt_text = ""
+            title_text = ""
+            for docPr in drawing.findall(f".//{{{wp_ns}}}docPr"):
+                alt_text = docPr.get("descr", "")
+                title_text = docPr.get("title", "")
+                break
+
+            for blip in drawing.findall(f".//{{{a_ns}}}blip"):
+                embed_key = f"{{{r_ns}}}embed"
+                if embed_key in blip.attrib:
+                    rId = blip.attrib[embed_key]
+                    try:
+                        image_part = doc.part.related_parts[rId]
+                        image_counter += 1
+                        images.append(
+                            {
+                                "type": "image",
+                                "index": image_counter,
+                                "image_part": image_part,
+                                "para_index": para_index,
+                                "alt": alt_text,
+                                "caption": title_text,
+                            }
+                        )
+                    except KeyError:
+                        pass
+
+        # Method 2: Legacy VML images (w:pict > v:imagedata)
+        for pict in element.findall(f".//{{{w_ns}}}pict"):
+            alt_text = ""
+            # Check v:shape for alt text
+            for shape in pict.findall(f".//{{{v_ns}}}shape"):
+                alt_text = shape.get("alt", "")
+                # Also check o:title
+                for title_elem in shape.findall(f".//{{{o_ns}}}title"):
+                    if title_elem.text:
+                        alt_text = title_elem.text
+                        break
+
+            for imagedata in pict.findall(f".//{{{v_ns}}}imagedata"):
+                rId = imagedata.get(f"{{{r_ns}}}id")
+                if rId:
+                    try:
+                        image_part = doc.part.related_parts[rId]
+                        image_counter += 1
+                        images.append(
+                            {
+                                "type": "image",
+                                "index": image_counter,
+                                "image_part": image_part,
+                                "para_index": para_index,
+                                "alt": alt_text,
+                                "caption": "",
+                            }
+                        )
+                    except KeyError:
+                        pass
+
+        return images
+
     for element in doc.element.body:
         tag = element.tag.split("}")[-1] if "}" in element.tag else element.tag
 
@@ -585,44 +660,24 @@ def get_document_elements_in_order(doc, toc_end_index):
                 if para_index > toc_end_index:
                     text = para.text.strip()
 
-                    # Check if paragraph contains images
-                    if para.runs:
-                        for run in para.runs:
-                            # Look for drawing elements that contain images
-                            for drawing in run._element.findall(
-                                ".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing"
-                            ):
-                                # Extract alt text and title from docPr element
-                                alt_text = ""
-                                title_text = ""
-                                wp_ns = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
-                                for docPr in drawing.findall(f".//{{{wp_ns}}}docPr"):
-                                    alt_text = docPr.get("descr", "")
-                                    title_text = docPr.get("title", "")
-                                    break  # Only need first docPr
+                    # Extract images from this paragraph (both drawing and pict)
+                    images = _extract_images_from_element(element, para_index)
+                    for img in images:
+                        yield img
 
-                                # Find blip (binary large image or picture)
-                                blips = drawing.findall(
-                                    ".//{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
-                                )
-                                for blip in blips:
-                                    # Get the relationship ID for the image
-                                    embed_key = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
-                                    if embed_key in blip.attrib:
-                                        rId = blip.attrib[embed_key]
-                                        try:
-                                            image_part = doc.part.related_parts[rId]
-                                            image_counter += 1
-                                            yield {
-                                                "type": "image",
-                                                "index": image_counter,
-                                                "image_part": image_part,
-                                                "para_index": para_index,
-                                                "alt": alt_text,
-                                                "caption": title_text,
-                                            }
-                                        except KeyError:
-                                            pass  # Skip if relationship not found
+                    # Warn about potential orphan captions (text with no adjacent image)
+                    if not images and text:
+                        # Check raw XML for tab indentation (3+ tabs)
+                        raw_xml = element.xml if hasattr(element, "xml") else ""
+                        tab_count = raw_xml.count(f"<{{{w_ns}}}tab/>")
+                        if (
+                            tab_count >= 3
+                            and len(text) < 200
+                            and not re.match(r"^\d+\.\d+", text)
+                        ):
+                            print(
+                                f'    WARNING: Possible orphan caption at para {para_index}: "{text[:80]}..."'
+                            )
 
                     if text:
                         yield {
@@ -1564,16 +1619,8 @@ def extract_and_save_image(image_part, image_index, config, export_root, section
 
     os.makedirs(pictures_dir, exist_ok=True)
 
-    # Determine file extension from content type
-    content_type = image_part.content_type
-    if "png" in content_type:
-        ext = "png"
-    elif "jpeg" in content_type or "jpg" in content_type:
-        ext = "jpg"
-    elif "gif" in content_type:
-        ext = "gif"
-    else:
-        ext = "png"  # default
+    # Always use .png extension for consistency
+    ext = "png"
 
     # Save image
     image_filename = f"image_{image_index:03d}.{ext}"
@@ -1590,23 +1637,32 @@ def extract_and_save_image(image_part, image_index, config, export_root, section
             f.write(image_data)
 
         # Convert to PNG
-        png_path = image_path.replace(f".{ext}", ".png")
-        if convert_wmf_to_png(wmf_path, png_path):
+        if convert_wmf_to_png(wmf_path, image_path):
             # Backup original WMF
-            backup_path = png_path + ".wmf.backup"
+            backup_path = image_path + ".wmf.backup"
             os.rename(wmf_path, backup_path)
-            image_filename = os.path.basename(png_path)
-            image_path = png_path
-            ext = "png"
         else:
             # Conversion failed, save as-is
             os.remove(wmf_path)
             with open(image_path, "wb") as f:
                 f.write(image_data)
     else:
-        # Regular image, save directly
+        # Regular image, save directly then convert to PNG if needed
         with open(image_path, "wb") as f:
             f.write(image_data)
+
+        # Convert non-PNG images (e.g., JPEG) to PNG
+        content_type = image_part.content_type
+        if "png" not in content_type:
+            try:
+                from PIL import Image
+
+                img = Image.open(image_path)
+                img.save(image_path, "PNG")
+            except ImportError:
+                pass  # Pillow not installed, file keeps original format with .png ext
+            except Exception:
+                pass  # Conversion failed, keep as-is
 
     # Post-process: auto-crop whitespace and limit resolution
     postprocess_image(image_path)
@@ -1621,16 +1677,8 @@ def extract_and_save_image_markdown(image_part, image_index, output_dir, chapter
     pictures_dir = os.path.join(output_dir, chapter_dir, "pictures")
     os.makedirs(pictures_dir, exist_ok=True)
 
-    # Determine file extension from content type
-    content_type = image_part.content_type
-    if "png" in content_type:
-        ext = "png"
-    elif "jpeg" in content_type or "jpg" in content_type:
-        ext = "jpg"
-    elif "gif" in content_type:
-        ext = "gif"
-    else:
-        ext = "png"
+    # Always use .png extension for consistency
+    ext = "png"
 
     image_filename = f"image_{image_index:03d}.{ext}"
     image_path = os.path.join(pictures_dir, image_filename)
@@ -1642,11 +1690,9 @@ def extract_and_save_image_markdown(image_part, image_index, output_dir, chapter
         with open(wmf_path, "wb") as f:
             f.write(image_data)
 
-        png_path = image_path.replace(f".{ext}", ".png")
-        if convert_wmf_to_png(wmf_path, png_path):
-            backup_path = png_path + ".wmf.backup"
+        if convert_wmf_to_png(wmf_path, image_path):
+            backup_path = image_path + ".wmf.backup"
             os.rename(wmf_path, backup_path)
-            image_filename = os.path.basename(png_path)
         else:
             os.remove(wmf_path)
             with open(image_path, "wb") as f:
@@ -1654,6 +1700,17 @@ def extract_and_save_image_markdown(image_part, image_index, output_dir, chapter
     else:
         with open(image_path, "wb") as f:
             f.write(image_data)
+
+        # Convert non-PNG images (e.g., JPEG) to PNG
+        content_type = image_part.content_type
+        if "png" not in content_type:
+            try:
+                from PIL import Image
+
+                img = Image.open(image_path)
+                img.save(image_path, "PNG")
+            except (ImportError, Exception):
+                pass  # Keep as-is if conversion fails
 
     # Post-process: auto-crop whitespace and limit resolution
     final_path = os.path.join(pictures_dir, image_filename)
@@ -1806,6 +1863,60 @@ def create_navigation_index(
     index_path = os.path.join(output_dir, "index.json")
     with open(index_path, "w", encoding="utf-8") as f:
         json.dump(index_data, f, indent=2)
+
+
+def validate_images(json_dir, images_dir):
+    """Validate image references after generation.
+
+    Checks that every JSON image reference has a file on disk, and reports
+    any orphaned image files not referenced by any JSON.
+    """
+    import glob as glob_mod
+
+    json_refs = set()
+    for jf in glob_mod.glob(f"{json_dir}/**/*.json", recursive=True):
+        try:
+            with open(jf, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for item in data.get("content", []):
+                if item.get("type") == "image" and item.get("path"):
+                    json_refs.add(item["path"])
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+    disk_files = set()
+    for root, dirs, files in os.walk(images_dir):
+        for f in files:
+            if f.endswith((".png", ".jpg")) and ".backup" not in f:
+                rel = os.path.relpath(os.path.join(root, f), images_dir)
+                disk_files.add(f"pictures/{rel}")
+
+    missing_on_disk = json_refs - disk_files
+    orphaned_on_disk = disk_files - json_refs
+
+    print("\n" + "=" * 80)
+    print("POST-GENERATION IMAGE VALIDATION")
+    print("=" * 80)
+
+    if missing_on_disk:
+        print(f"\nERROR: {len(missing_on_disk)} JSON refs with no file on disk:")
+        for p in sorted(missing_on_disk):
+            print(f"  {p}")
+    else:
+        print("\nAll JSON image references have matching files on disk.")
+
+    if orphaned_on_disk:
+        print(f"\nWARNING: {len(orphaned_on_disk)} image files not referenced in JSON:")
+        for p in sorted(orphaned_on_disk):
+            print(f"  {p}")
+    else:
+        print("No orphaned image files found.")
+
+    if not missing_on_disk and not orphaned_on_disk:
+        print("\nAll image checks passed.")
+    print("=" * 80)
+
+    return len(missing_on_disk) == 0
 
 
 def build_book_json():
@@ -2291,6 +2402,14 @@ def build_book_json():
     if ENABLE_MARKDOWN:
         print(f"✓ Markdown files: {MARKDOWN_DIR}/")
     print("=" * 80)
+
+    # Validate image references against files on disk
+    if pictures_location == "root":
+        images_root = os.path.join(export_root, "pictures", lang, book_id)
+    else:
+        images_root = os.path.join(json_book_dir, "pictures")
+    if os.path.exists(images_root):
+        validate_images(json_book_dir, images_root)
 
 
 if __name__ == "__main__":
