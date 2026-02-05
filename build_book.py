@@ -1347,6 +1347,55 @@ def extract_table_markdown(table):
     return "\n".join(lines)
 
 
+def postprocess_image(image_path, max_size=1200, border=10, white_threshold=240):
+    """Auto-crop whitespace and limit resolution of an image.
+
+    Args:
+        image_path: Path to the image file to process (modified in-place).
+        max_size: Maximum pixels on the longest side (0 to disable).
+        border: Pixels of border to keep around cropped content.
+        white_threshold: RGB values above this are treated as background.
+    """
+    try:
+        from PIL import Image, ImageChops
+    except ImportError:
+        return  # Pillow not installed, skip post-processing
+
+    try:
+        img = Image.open(image_path)
+    except Exception:
+        return  # Can't open image, skip
+
+    # Convert to RGB if necessary (handles RGBA, palette, etc.)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+
+    # Auto-crop: remove surrounding whitespace (using threshold for near-white)
+    # Create a background image filled with the threshold color
+    bg = Image.new(img.mode, img.size, tuple([white_threshold] * len(img.getbands())))
+    # Any pixel darker than the threshold will show up in the diff
+    diff = ImageChops.subtract(bg, img)
+    bbox = diff.getbbox()
+    if bbox:
+        left, top, right, bottom = bbox
+        left = max(0, left - border)
+        top = max(0, top - border)
+        right = min(img.width, right + border)
+        bottom = min(img.height, bottom + border)
+        img = img.crop((left, top, right, bottom))
+
+    # Limit resolution: scale down if longest side exceeds max_size
+    if max_size > 0:
+        longest = max(img.width, img.height)
+        if longest > max_size:
+            scale = max_size / longest
+            new_w = int(img.width * scale)
+            new_h = int(img.height * scale)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+
+    img.save(image_path)
+
+
 def is_wmf_image(image_data):
     """Check if image data is WMF format by checking magic bytes."""
     if len(image_data) < 4:
@@ -1390,23 +1439,28 @@ def convert_wmf_to_png(wmf_path, output_path):
                     pdf_path = str(pdf_files[0])
 
                     # Convert PDF to PNG using ImageMagick
+                    # Use -trim to extract just the vector content (not the full page)
                     magick_cmd = None
                     if shutil.which("magick"):
                         magick_cmd = [
                             "magick",
                             "-density",
-                            "300",
+                            "150",
                             pdf_path,
                             "-flatten",
+                            "-trim",
+                            "+repage",
                             "png:" + output_path,
                         ]
                     elif shutil.which("convert"):
                         magick_cmd = [
                             "convert",
                             "-density",
-                            "300",
+                            "150",
                             pdf_path,
                             "-flatten",
+                            "-trim",
+                            "+repage",
                             "png:" + output_path,
                         ]
 
@@ -1554,6 +1608,9 @@ def extract_and_save_image(image_part, image_index, config, export_root, section
         with open(image_path, "wb") as f:
             f.write(image_data)
 
+    # Post-process: auto-crop whitespace and limit resolution
+    postprocess_image(image_path)
+
     # Build logical path for JSON references (relative to section)
     logical_path = f"pictures/{section_path}/{image_filename}"
     return image_filename, logical_path
@@ -1597,6 +1654,10 @@ def extract_and_save_image_markdown(image_part, image_index, output_dir, chapter
     else:
         with open(image_path, "wb") as f:
             f.write(image_data)
+
+    # Post-process: auto-crop whitespace and limit resolution
+    final_path = os.path.join(pictures_dir, image_filename)
+    postprocess_image(final_path)
 
     return f"pictures/{image_filename}"
 

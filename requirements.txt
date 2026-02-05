@@ -4,8 +4,8 @@
 # Core document processing
 python-docx>=0.8.11
 
-# Optional: For enhanced image processing (if not using system ImageMagick)
-# Pillow>=10.0.0
+# Image post-processing (auto-crop whitespace, resolution limiting)
+Pillow>=10.0.0
 
 # Optional: For future enhancements
 # lxml>=4.9.0

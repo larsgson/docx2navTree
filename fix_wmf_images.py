@@ -14,6 +14,43 @@ import subprocess
 from pathlib import Path
 
 
+def postprocess_image(image_path, max_size=1200, border=10, white_threshold=240):
+    """Auto-crop whitespace and limit resolution of an image."""
+    try:
+        from PIL import Image, ImageChops
+    except ImportError:
+        return
+
+    try:
+        img = Image.open(image_path)
+    except Exception:
+        return
+
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+
+    bg = Image.new(img.mode, img.size, tuple([white_threshold] * len(img.getbands())))
+    diff = ImageChops.subtract(bg, img)
+    bbox = diff.getbbox()
+    if bbox:
+        left, top, right, bottom = bbox
+        left = max(0, left - border)
+        top = max(0, top - border)
+        right = min(img.width, right + border)
+        bottom = min(img.height, bottom + border)
+        img = img.crop((left, top, right, bottom))
+
+    if max_size > 0:
+        longest = max(img.width, img.height)
+        if longest > max_size:
+            scale = max_size / longest
+            new_w = int(img.width * scale)
+            new_h = int(img.height * scale)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+
+    img.save(image_path)
+
+
 def is_wmf_image(image_path):
     """Check if image file is WMF format by checking magic bytes."""
     try:
@@ -56,23 +93,28 @@ def convert_wmf_to_png(wmf_path, output_path):
                     pdf_path = str(pdf_files[0])
 
                     # Convert PDF to PNG using ImageMagick
+                    # Use -trim to extract just the vector content (not the full page)
                     magick_cmd = None
                     if shutil.which("magick"):
                         magick_cmd = [
                             "magick",
                             "-density",
-                            "300",
+                            "150",
                             pdf_path,
                             "-flatten",
+                            "-trim",
+                            "+repage",
                             "png:" + output_path,
                         ]
                     elif shutil.which("convert"):
                         magick_cmd = [
                             "convert",
                             "-density",
-                            "300",
+                            "150",
                             pdf_path,
                             "-flatten",
+                            "-trim",
+                            "+repage",
                             "png:" + output_path,
                         ]
 
@@ -196,10 +238,13 @@ def fix_wmf_images(base_dir="export/pictures"):
                     # Move converted PNG to final location
                     shutil.move(png_temp, str(png_path))
 
+                    # Post-process: auto-crop whitespace and limit resolution
+                    postprocess_image(str(png_path))
+
                     # Clean up temp WMF
                     os.remove(wmf_temp)
 
-                    print(f"  ✓ Converted successfully")
+                    print(f"  ✓ Converted and post-processed successfully")
                     print(f"  ✓ Original backed up to: {Path(backup_path).name}")
                     converted_count += 1
                 else:
