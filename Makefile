@@ -4,7 +4,7 @@
 # Variables
 PYTHON := ./venv/bin/python3
 PIP := ./venv/bin/pip
-INPUT_DOCX := original-book.docx
+INPUT_DOCX := example/sample-book.docx
 EXPORT_DIR := export
 MARKDOWN_DIR := export_md
 
@@ -14,7 +14,7 @@ BLUE := \033[0;34m
 YELLOW := \033[0;33m
 NC := \033[0m # No Color
 
-.PHONY: help build clean install-deps check-deps verify setup-libreoffice status stats rebuild rebuild-all
+.PHONY: help all build images clean install-deps check-deps verify setup-libreoffice status stats rebuild rebuild-all
 
 # Default target
 help:
@@ -22,7 +22,9 @@ help:
 	@echo "======================================="
 	@echo ""
 	@echo "Available targets:"
-	@echo "  $(GREEN)make build$(NC)              - Build complete book content"
+	@echo "  $(GREEN)make all$(NC)                - Build JSON/Markdown and process images"
+	@echo "  $(GREEN)make build$(NC)              - Generate JSON and Markdown (no image files)"
+	@echo "  $(GREEN)make images$(NC)             - Extract and process images from DOCX"
 	@echo "  $(GREEN)make clean$(NC)              - Clean generated files"
 	@echo "  $(GREEN)make rebuild-all$(NC)        - Clean and rebuild from scratch"
 	@echo "  $(GREEN)make verify$(NC)             - Verify all images and content"
@@ -35,7 +37,7 @@ help:
 	@echo "Quick start:"
 	@echo "  1. make install-deps       # Install dependencies"
 	@echo "  2. make check-deps         # Verify everything is ready"
-	@echo "  3. make build              # Build the book content"
+	@echo "  3. make all                # Build everything"
 	@echo ""
 	@echo "Output:"
 	@echo "  - JSON content: $(EXPORT_DIR)/{lang}/{book_id}/"
@@ -84,17 +86,27 @@ install-deps:
 	@echo "$(YELLOW)For WMF image conversion on macOS, also run:$(NC)"
 	@echo "  make setup-libreoffice"
 
-# Build everything from the Word document
+# Generate JSON, Markdown, and image manifest (no image file I/O)
 build:
-	@echo "$(BLUE)Building book content...$(NC)"
+	@echo "$(BLUE)Generating JSON and Markdown...$(NC)"
 	@echo ""
-	@test -f $(INPUT_DOCX) || (echo "$(YELLOW)⚠️  Input file not found: $(INPUT_DOCX)$(NC)" && exit 1)
 	$(PYTHON) build_book.py
 	@echo ""
 	@echo "$(GREEN)✅ Build complete!$(NC)"
 	@echo "$(GREEN)   JSON:     $(EXPORT_DIR)/{lang}/{book_id}/$(NC)"
-	@echo "$(GREEN)   Pictures: $(EXPORT_DIR)/pictures/$(NC)"
 	@echo "$(GREEN)   Markdown: $(MARKDOWN_DIR)/$(NC)"
+
+# Extract and process images from DOCX using the image manifest
+images:
+	@echo "$(BLUE)Processing images...$(NC)"
+	@echo ""
+	$(PYTHON) process_images.py
+	@echo ""
+	@echo "$(GREEN)✅ Image processing complete!$(NC)"
+	@echo "$(GREEN)   Pictures: $(EXPORT_DIR)/pictures/$(NC)"
+
+# Build everything (JSON + Markdown + images)
+all: build images
 
 # Clean generated files
 clean:
@@ -132,7 +144,7 @@ stats:
 rebuild: clean build
 
 # Full rebuild (clean everything and build)
-rebuild-all: clean build
+rebuild-all: clean all
 
 # Setup LibreOffice for ImageMagick (macOS only)
 setup-libreoffice:

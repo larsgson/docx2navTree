@@ -37,6 +37,7 @@ yarn.lock
 
 # Book Configuration (user-specific, copy from .example)
 book_config.toml
+conf/exceptions.conf
 
 # Generated Book Content (DO NOT COMMIT)
 export/
@@ -45,8 +46,7 @@ markdown_chapters/
 chapters/
 *.docx
 *.doc
-!sample-book.docx
-original-book.docx
+!example/sample-book.docx
 
 # Images and Media
 *.wmf.backup
@@ -90,6 +90,8 @@ htmlcov/
 .pytest_cache/
 .tox/
 coverage/
+prev/
+lang-store/*/**
 
 # Temporary files
 *.tmp

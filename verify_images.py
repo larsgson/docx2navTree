@@ -9,8 +9,32 @@ from collections import defaultdict
 from pathlib import Path
 
 
+def load_current_book_config():
+    """Load language and canonical_id from book_config.toml."""
+    config_path = Path("book_config.toml")
+    if not config_path.exists():
+        return None, None
+
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib
+        except ImportError:
+            return None, None
+
+    with open(config_path, "rb") as f:
+        config = tomllib.load(f)
+
+    return config.get("language", "eng"), config.get("canonical_id")
+
+
 def verify_images():
-    """Check all JSON files for image references and verify files exist."""
+    """Check JSON files for image references and verify files exist.
+
+    If book_config.toml is present, only verifies the configured book.
+    Otherwise falls back to checking all books.
+    """
 
     export_path = Path("export")
 
@@ -21,15 +45,25 @@ def verify_images():
     issues = []
     stats = defaultdict(int)
 
-    # Find all language/book directories
-    for lang_dir in sorted(export_path.iterdir()):
-        if not lang_dir.is_dir() or lang_dir.name == "pictures":
-            continue
-
-        for book_dir in sorted(lang_dir.iterdir()):
-            if not book_dir.is_dir():
+    # Determine which books to check
+    lang, book_id = load_current_book_config()
+    if lang and book_id:
+        book_dir = export_path / lang / book_id
+        if not book_dir.is_dir():
+            print(f"❌ Book directory not found: {book_dir}")
+            return False
+        books_to_check = [(export_path / lang, book_dir)]
+        print(f"Verifying configured book: {lang}/{book_id}")
+    else:
+        books_to_check = []
+        for lang_dir in sorted(export_path.iterdir()):
+            if not lang_dir.is_dir() or lang_dir.name == "pictures":
                 continue
+            for bd in sorted(lang_dir.iterdir()):
+                if bd.is_dir():
+                    books_to_check.append((lang_dir, bd))
 
+    for lang_dir, book_dir in books_to_check:
             print(f"\n📚 Checking: {lang_dir.name}/{book_dir.name}")
 
             # Iterate through all chapter directories (XX_chapter_name format)
@@ -137,37 +171,53 @@ def list_orphaned_images():
     # Build set of all referenced images
     referenced = set()
 
-    for lang_dir in sorted(export_path.iterdir()):
-        if not lang_dir.is_dir() or lang_dir.name == "pictures":
-            continue
+    # Determine which books to check
+    lang, book_id = load_current_book_config()
+    if lang and book_id:
+        book_dir = export_path / lang / book_id
+        books_to_check = [(export_path / lang, book_dir)] if book_dir.is_dir() else []
+    else:
+        books_to_check = []
+        for lang_dir in sorted(export_path.iterdir()):
+            if not lang_dir.is_dir() or lang_dir.name == "pictures":
+                continue
+            for bd in sorted(lang_dir.iterdir()):
+                if bd.is_dir():
+                    books_to_check.append((lang_dir, bd))
 
-        for book_dir in sorted(lang_dir.iterdir()):
-            if not book_dir.is_dir():
+    for lang_dir, book_dir in books_to_check:
+        for chapter_dir in sorted(book_dir.iterdir()):
+            if not chapter_dir.is_dir() or not chapter_dir.name[0].isdigit():
                 continue
 
-            for chapter_dir in sorted(book_dir.iterdir()):
-                if not chapter_dir.is_dir() or not chapter_dir.name[0].isdigit():
+            for json_file in chapter_dir.glob("*.json"):
+                try:
+                    with open(json_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+
+                    for item in data.get("content", []):
+                        if item.get("type") == "image":
+                            path = item.get("path", "")
+                            if path.startswith("pictures/"):
+                                full_path = (
+                                    f"{lang_dir.name}/{book_dir.name}/{path[9:]}"
+                                )
+                                referenced.add(full_path)
+                except:
                     continue
 
-                for json_file in chapter_dir.glob("*.json"):
-                    try:
-                        with open(json_file, "r", encoding="utf-8") as f:
-                            data = json.load(f)
+    # Determine which pictures subdirectory to check
+    if lang and book_id:
+        scan_path = pictures_path / lang / book_id
+    else:
+        scan_path = pictures_path
 
-                        for item in data.get("content", []):
-                            if item.get("type") == "image":
-                                path = item.get("path", "")
-                                if path.startswith("pictures/"):
-                                    # Store full relative path from pictures root
-                                    full_path = (
-                                        f"{lang_dir.name}/{book_dir.name}/{path[9:]}"
-                                    )
-                                    referenced.add(full_path)
-                    except:
-                        continue
+    if not scan_path.exists():
+        print("\n✅ No pictures directory to check for orphans.")
+        return
 
     # Check for orphaned files in pictures directory
-    for img_file in sorted(pictures_path.rglob("*")):
+    for img_file in sorted(scan_path.rglob("*")):
         if img_file.is_file():
             rel_path = str(img_file.relative_to(pictures_path))
             # Skip backup files and manifest

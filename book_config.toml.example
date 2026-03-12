@@ -23,6 +23,16 @@ is_original = true
 # Uncomment and set this for translations:
 # original_language = "eng"
 
+# Path to the DOCX file to process.
+# If empty, defaults to example/sample-book.docx
+# Example: "lang-store/eng/original-book.docx"
+original_book_file = ""
+
+# Path to the TOC exceptions configuration file.
+# If empty, defaults to example/exceptions.conf
+# Example: "lang-store/eng/exceptions.eng.conf"
+exceptions_file = ""
+
 # Where to store pictures in the output structure.
 # Options:
 #   "root"    - pictures/ folder at root level (sibling to language folders)

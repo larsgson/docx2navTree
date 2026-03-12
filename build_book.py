@@ -15,9 +15,9 @@ import sys
 from docx import Document
 
 # Configuration
-INPUT_DOCX = "original-book.docx"
+DEFAULT_INPUT_DOCX = "example/sample-book.docx"
 MARKDOWN_DIR = "export_md"
-EXCEPTIONS_FILE = "conf/exceptions.conf"
+DEFAULT_EXCEPTIONS_FILE = "example/exceptions.conf"
 BOOK_CONFIG_FILE = "book_config.toml"
 ENABLE_MARKDOWN = True  # Enable markdown generation alongside JSON
 
@@ -36,9 +36,10 @@ def slugify(text):
         return "untitled"
     # Remove number prefix (e.g., "1.1 " or "1.0 " or "1.3.2 ")
     text = re.sub(r"^\d+(\.\d+)*\s*", "", text)
-    # Convert to lowercase, replace spaces/special chars with underscores
+    # Convert to lowercase, replace non-word chars with underscores
+    # Supports Unicode letters (Cyrillic, etc.) via \w character class
     text = text.lower().strip()
-    text = re.sub(r"[^a-z0-9]+", "_", text)
+    text = re.sub(r"[^\w]+", "_", text, flags=re.UNICODE)
     text = text.strip("_")
     return text if text else "untitled"
 
@@ -66,6 +67,36 @@ def build_section_id(chapter_slug, section_slug=None, subsection_slug=None):
         return f"{chapter_slug}/{section_slug}"
     else:
         return f"{chapter_slug}/intro"
+
+
+def resolve_paths_from_config():
+    """Resolve input DOCX and exceptions file paths from book_config.toml.
+
+    Returns (input_docx, exceptions_file) with defaults applied.
+    """
+    input_docx = DEFAULT_INPUT_DOCX
+    exceptions_file = DEFAULT_EXCEPTIONS_FILE
+
+    if os.path.exists(BOOK_CONFIG_FILE):
+        try:
+            import tomllib  # Python 3.11+
+        except ImportError:
+            try:
+                import tomli as tomllib  # type: ignore[import-not-found]
+            except ImportError:
+                return input_docx, exceptions_file
+
+        try:
+            with open(BOOK_CONFIG_FILE, "rb") as f:
+                file_config = tomllib.load(f)
+            if file_config.get("original_book_file"):
+                input_docx = file_config["original_book_file"]
+            if file_config.get("exceptions_file"):
+                exceptions_file = file_config["exceptions_file"]
+        except Exception:
+            pass
+
+    return input_docx, exceptions_file
 
 
 def load_book_config(docx_path):
@@ -494,10 +525,14 @@ def extract_number_and_title(text, doc, para_index):
     use_dotall = False
 
     if doc and para_index is not None:
+        # Cache paragraphs list to avoid rebuilding it on every access
+        if not hasattr(doc, "_cached_paragraphs"):
+            doc._cached_paragraphs = doc.paragraphs
+        paras = doc._cached_paragraphs
         for offset in range(1, 6):
             next_idx = para_index + offset
-            if next_idx < len(doc.paragraphs):
-                next_text = doc.paragraphs[next_idx].text.strip()
+            if next_idx < len(paras):
+                next_text = paras[next_idx].text.strip()
                 if next_text and not re.match(r"^\d+\.", next_text):
                     combined_text += " " + next_text
                 else:
@@ -610,6 +645,8 @@ def get_document_elements_in_order(doc, toc_end_index):
                                 "type": "image",
                                 "index": image_counter,
                                 "image_part": image_part,
+                                "rId": rId,
+                                "content_type": image_part.content_type,
                                 "para_index": para_index,
                                 "alt": alt_text,
                                 "caption": title_text,
@@ -641,6 +678,8 @@ def get_document_elements_in_order(doc, toc_end_index):
                                 "type": "image",
                                 "index": image_counter,
                                 "image_part": image_part,
+                                "rId": rId,
+                                "content_type": image_part.content_type,
                                 "para_index": para_index,
                                 "alt": alt_text,
                                 "caption": "",
@@ -681,19 +720,6 @@ def get_document_elements_in_order(doc, toc_end_index):
 
                     for img in images:
                         yield img
-
-                    # Warn about potential orphan captions (text with no adjacent image)
-                    if not images and text:
-                        # Check for tab indentation (3+ tabs)
-                        tab_count = len(element.findall(f".//{{{w_ns}}}tab"))
-                        if (
-                            tab_count >= 3
-                            and len(text) < 200
-                            and not re.match(r"^\d+\.\d+", text)
-                        ):
-                            print(
-                                f'    WARNING: Possible orphan caption at para {para_index}: "{text[:80]}..."'
-                            )
 
                     if text:
                         yield {
@@ -804,6 +830,8 @@ def parse_document_structure(doc, exceptions, expected_sequence=None):
                 source["index"],
                 source.get("alt", ""),
                 source.get("caption", ""),
+                source.get("rId", ""),
+                source.get("content_type", ""),
             )
         else:
             element_obj = source["element"]
@@ -813,6 +841,49 @@ def parse_document_structure(doc, exceptions, expected_sequence=None):
         if source["type"] == "paragraph":
             text = source["text"]
             parsed = extract_number_and_title(text, source["doc"], source["index"])
+            # Fallback: if no number found, check if heading style matches a TOC entry
+            if parsed is None and expected_sequence:
+                para_obj = source["element"]
+                style_name = para_obj.style.name if para_obj.style else ""
+                if style_name.startswith("Heading"):
+                    para_title = normalize_for_comparison(text)
+                    if len(para_title) > 3:
+                        # Search remaining TOC entries for title match
+                        # Prefer chapter-level (N.0) entries for Heading 1
+                        best_match = None
+                        for look_idx in range(
+                            expected_index, len(expected_sequence)
+                        ):
+                            look_entry = expected_sequence[look_idx]
+                            look_title_only = re.sub(
+                                r"^\d+\.\d+(?:\.\d+)?\s*", "",
+                                look_entry["title_normalized"],
+                            )
+                            if (
+                                len(look_title_only) > 3
+                                and (
+                                    para_title in look_title_only
+                                    or look_title_only in para_title
+                                )
+                            ):
+                                is_chapter = look_entry["section"] == 0
+                                gap = look_idx - expected_index
+                                # Accept immediately if it's nearby (within 10)
+                                if gap <= 10:
+                                    best_match = look_idx
+                                    break
+                                # For large jumps, only accept chapter-level matches
+                                # to avoid false positives from subsection titles
+                                elif is_chapter:
+                                    best_match = look_idx
+                                    break
+                        if best_match is not None:
+                            match_entry = expected_sequence[best_match]
+                            ch = match_entry["chapter"]
+                            sec = match_entry["section"]
+                            sub = match_entry.get("subsection")
+                            parsed = (ch, sec, sub, text)
+                            expected_index = best_match + 1
         elif source["type"] == "table_cell":
             text = source["text"]
             parsed = extract_number_and_title(text, None, None)
@@ -851,6 +922,8 @@ def parse_document_structure(doc, exceptions, expected_sequence=None):
                     source["index"],
                     source.get("alt", ""),
                     source.get("caption", ""),
+                    source.get("rId", ""),
+                    source.get("content_type", ""),
                 )
 
             # Determine entry type
@@ -947,7 +1020,9 @@ def parse_document_structure(doc, exceptions, expected_sequence=None):
 
                 # Determine correct element type
                 elem_type = (
-                    "table_cell" if source["type"] == "table_cell" else "paragraph"
+                    source["type"]
+                    if source["type"] in ("table_cell", "image")
+                    else "paragraph"
                 )
                 chapter_elements[chapter].append((elem_type, element_obj))
 
@@ -967,7 +1042,9 @@ def parse_document_structure(doc, exceptions, expected_sequence=None):
 
                 # Determine correct element type
                 elem_type = (
-                    "table_cell" if source["type"] == "table_cell" else "paragraph"
+                    source["type"]
+                    if source["type"] in ("table_cell", "image")
+                    else "paragraph"
                 )
                 section_elements[(chapter, section)].append((elem_type, element_obj))
 
@@ -996,7 +1073,9 @@ def parse_document_structure(doc, exceptions, expected_sequence=None):
 
                 # Determine correct element type
                 elem_type = (
-                    "table_cell" if source["type"] == "table_cell" else "paragraph"
+                    source["type"]
+                    if source["type"] in ("table_cell", "image")
+                    else "paragraph"
                 )
                 subsection_elements[(chapter, section, subsection)].append(
                     (elem_type, element_obj)
@@ -1056,16 +1135,27 @@ def _is_caption_paragraph(elem_type, elem_obj):
     return True
 
 
+def _section_label(key_type, key):
+    """Convert an internal section key to a dotted string label."""
+    if key_type == "chapter":
+        return f"{key}.0"
+    elif key_type == "section":
+        return f"{key[0]}.{key[1]}"
+    else:
+        return f"{key[0]}.{key[1]}.{key[2]}"
+
+
 def reconcile_captions_and_images(
     chapters, chapter_elements, section_elements, subsection_elements
 ):
-    """Post-pass: move images to sections with matching orphan captions.
+    """Identify images that should be relocated to match orphan captions.
 
     Scans for sections that have caption-like paragraphs but no images,
     and adjacent sections (same chapter) that have images without captions.
-    Moves the image(s) to pair them with their captions.
+    Returns relocation records without mutating the element dictionaries.
     """
-    moves = 0
+    relocations = []
+    orphan_captions = []
 
     # Build ordered list of all section keys for adjacency lookup
     all_keys = []  # list of (key_type, key) tuples
@@ -1088,14 +1178,6 @@ def reconcile_captions_and_images(
         else:
             return subsection_elements.get(key, [])
 
-    def _set_elements(key_type, key, elements):
-        if key_type == "chapter":
-            chapter_elements[key] = elements
-        elif key_type == "section":
-            section_elements[key] = elements
-        else:
-            subsection_elements[key] = elements
-
     def _has_images(elements):
         return any(et == "image" for et, _ in elements)
 
@@ -1107,6 +1189,12 @@ def reconcile_captions_and_images(
             return key
         return key[0]
 
+    def _get_caption_text(elements):
+        for et, eo in elements:
+            if _is_caption_paragraph(et, eo):
+                return eo.text.strip()
+        return ""
+
     # Scan for sections with captions but no images
     for idx, (key_type, key) in enumerate(all_keys):
         elements = _get_elements(key_type, key)
@@ -1114,7 +1202,10 @@ def reconcile_captions_and_images(
         if not _has_caption(elements) or _has_images(elements):
             continue
 
+        caption_text = _get_caption_text(elements)
+
         # Found orphan caption section — look backward 1-2 sections for a donor
+        found_donor = False
         for look_back in range(1, 3):
             donor_idx = idx - look_back
             if donor_idx < 0:
@@ -1128,42 +1219,48 @@ def reconcile_captions_and_images(
             donor_elements = _get_elements(donor_key_type, donor_key)
 
             if _has_images(donor_elements) and not _has_caption(donor_elements):
-                # Move image(s) from donor to caption section
-                images_to_move = [
+                # Record relocation for each image in the donor
+                images_in_donor = [
                     (et, eo) for et, eo in donor_elements if et == "image"
                 ]
-                remaining = [(et, eo) for et, eo in donor_elements if et != "image"]
-                _set_elements(donor_key_type, donor_key, remaining)
-
-                # Insert images just before the caption in the target
-                target_elements = _get_elements(key_type, key)
-                caption_pos = next(
-                    (
-                        i
-                        for i, (et, eo) in enumerate(target_elements)
-                        if _is_caption_paragraph(et, eo)
-                    ),
-                    None,
-                )
-
-                if caption_pos is not None:
-                    for img in reversed(images_to_move):
-                        target_elements.insert(caption_pos, img)
-                else:
-                    target_elements.extend(images_to_move)
-
-                _set_elements(key_type, key, target_elements)
-                moves += len(images_to_move)
+                for _et, eo in images_in_donor:
+                    relocations.append(
+                        {
+                            "image_index": eo[1],
+                            "from": _section_label(donor_key_type, donor_key),
+                            "to": _section_label(key_type, key),
+                            "caption_text": caption_text,
+                        }
+                    )
                 print(
-                    f"    Caption reconciliation: moved {len(images_to_move)} image(s)"
-                    f" from {donor_key} to {key}"
+                    f"    Caption reconciliation: {len(images_in_donor)} image(s)"
+                    f" should move from {_section_label(donor_key_type, donor_key)}"
+                    f" to {_section_label(key_type, key)}"
                 )
+                found_donor = True
                 break  # Only one donor per orphan
 
-    if moves:
-        print(f"  Caption reconciliation: {moves} image(s) relocated total")
+        if not found_donor:
+            orphan_captions.append(
+                {
+                    "section": _section_label(key_type, key),
+                    "text": caption_text,
+                }
+            )
+
+    if relocations:
+        print(
+            f"  Caption reconciliation: {len(relocations)} image relocation(s) recorded"
+        )
     else:
         print("  Caption reconciliation: no relocations needed")
+
+    if orphan_captions:
+        print(
+            f"  Caption reconciliation: {len(orphan_captions)} orphan caption(s) with no donor"
+        )
+
+    return {"relocations": relocations, "orphan_captions": orphan_captions}
 
 
 def validate_image_sequence(
@@ -1171,7 +1268,6 @@ def validate_image_sequence(
     chapter_elements,
     section_elements,
     subsection_elements,
-    log_dir=None,
 ):
     """Check that image indices are monotonically non-decreasing within each chapter.
 
@@ -1179,11 +1275,10 @@ def validate_image_sequence(
     should increase as you move through sections.  An out-of-order index
     suggests a frame-positioned image may have been assigned to the wrong section.
 
-    If *log_dir* is given, a detailed log is written to
-    ``<log_dir>/image_sequence_validation.log``.
+    Returns a dict with per-chapter results.
     """
-    lines = []  # collect all output lines for the log file
-    warnings = 0
+    chapter_results = []
+    total_warnings = 0
 
     for chapter_num in sorted(chapters.keys()):
         # Collect (section_key_label, image_index) pairs in document order
@@ -1213,46 +1308,42 @@ def validate_image_sequence(
 
         # Walk sequence and check monotonicity
         max_seen = -1
-        chapter_warnings = 0
+        chapter_warnings = []
         for section_label, img_idx in sequence:
             if img_idx < max_seen:
                 gap = max_seen - img_idx
-                msg = (
+                print(
                     f"  WARNING: Image #{img_idx} in section {section_label}"
                     f" is out of sequence (previous max #{max_seen}, gap={gap})"
                 )
-                print(f"  {msg}")
-                lines.append(msg)
-                warnings += 1
-                chapter_warnings += 1
+                chapter_warnings.append(
+                    {
+                        "image_index": img_idx,
+                        "section": section_label,
+                        "previous_max": max_seen,
+                        "gap": gap,
+                    }
+                )
+                total_warnings += 1
             if img_idx > max_seen:
                 max_seen = img_idx
 
-        if chapter_warnings:
-            lines.append(
-                f"  Chapter {chapter_num}: {chapter_warnings} warning(s) "
-                f"({len(sequence)} images)\n"
-            )
-        else:
-            lines.append(f"  Chapter {chapter_num}: OK ({len(sequence)} images)")
+        chapter_results.append(
+            {
+                "chapter": chapter_num,
+                "image_count": len(sequence),
+                "status": "warnings" if chapter_warnings else "ok",
+                "warnings": chapter_warnings,
+            }
+        )
 
     # Summary
-    if warnings:
-        summary = f"Image sequence validation: {warnings} warning(s)"
+    if total_warnings:
+        print(f"  Image sequence validation: {total_warnings} warning(s)")
     else:
-        summary = "Image sequence validation: all OK"
-    print(f"  {summary}")
-    lines.insert(0, summary + "\n")
+        print("  Image sequence validation: all OK")
 
-    # Write log file
-    if log_dir:
-        os.makedirs(log_dir, exist_ok=True)
-        log_path = os.path.join(log_dir, "image_sequence_validation.log")
-        with open(log_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        print(f"  Log written to {log_path}")
-
-    return warnings
+    return {"chapters": chapter_results}
 
 
 def extract_paragraph_json(para):
@@ -1645,323 +1736,6 @@ def extract_table_markdown(table):
     return "\n".join(lines)
 
 
-def postprocess_image(image_path, max_size=1200, border=10, white_threshold=240):
-    """Auto-crop whitespace and limit resolution of an image.
-
-    Args:
-        image_path: Path to the image file to process (modified in-place).
-        max_size: Maximum pixels on the longest side (0 to disable).
-        border: Pixels of border to keep around cropped content.
-        white_threshold: RGB values above this are treated as background.
-    """
-    try:
-        from PIL import Image, ImageChops
-    except ImportError:
-        return  # Pillow not installed, skip post-processing
-
-    try:
-        img = Image.open(image_path)
-    except Exception:
-        return  # Can't open image, skip
-
-    # Convert to RGB if necessary (handles RGBA, palette, etc.)
-    if img.mode not in ("RGB", "L"):
-        img = img.convert("RGB")
-
-    # Auto-crop: remove surrounding whitespace (using threshold for near-white)
-    # Create a background image filled with the threshold color
-    bg = Image.new(img.mode, img.size, tuple([white_threshold] * len(img.getbands())))
-    # Any pixel darker than the threshold will show up in the diff
-    diff = ImageChops.subtract(bg, img)
-    bbox = diff.getbbox()
-    if bbox:
-        left, top, right, bottom = bbox
-        left = max(0, left - border)
-        top = max(0, top - border)
-        right = min(img.width, right + border)
-        bottom = min(img.height, bottom + border)
-        img = img.crop((left, top, right, bottom))
-
-    # Limit resolution: scale down if longest side exceeds max_size
-    if max_size > 0:
-        longest = max(img.width, img.height)
-        if longest > max_size:
-            scale = max_size / longest
-            new_w = int(img.width * scale)
-            new_h = int(img.height * scale)
-            img = img.resize((new_w, new_h), Image.LANCZOS)
-
-    img.save(image_path)
-
-
-def is_wmf_image(image_data):
-    """Check if image data is WMF format by checking magic bytes."""
-    if len(image_data) < 4:
-        return False
-    # WMF magic bytes: 0xD7CDC69A or 0x01000900
-    magic = image_data[:4]
-    return magic == b"\xd7\xcd\xc6\x9a" or magic == b"\x01\x00\x09\x00"
-
-
-def convert_wmf_to_png(wmf_path, output_path):
-    """Convert WMF to PNG using LibreOffice -> PDF -> PNG chain."""
-    import shutil
-    import subprocess
-    import tempfile
-    from pathlib import Path
-
-    # Try LibreOffice first (best for WMF)
-    soffice = shutil.which("soffice") or shutil.which("libreoffice")
-    if soffice:
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                # Convert WMF to PDF using LibreOffice
-                result = subprocess.run(
-                    [
-                        soffice,
-                        "--headless",
-                        "--convert-to",
-                        "pdf",
-                        "--outdir",
-                        tmpdir,
-                        wmf_path,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-
-                # Find the generated PDF (LibreOffice might name it differently)
-                pdf_files = list(Path(tmpdir).glob("*.pdf"))
-                if pdf_files:
-                    pdf_path = str(pdf_files[0])
-
-                    # Convert PDF to PNG using ImageMagick
-                    # Use -trim to extract just the vector content (not the full page)
-                    magick_cmd = None
-                    if shutil.which("magick"):
-                        magick_cmd = [
-                            "magick",
-                            "-density",
-                            "150",
-                            pdf_path,
-                            "-flatten",
-                            "-trim",
-                            "+repage",
-                            "png:" + output_path,
-                        ]
-                    elif shutil.which("convert"):
-                        magick_cmd = [
-                            "convert",
-                            "-density",
-                            "150",
-                            pdf_path,
-                            "-flatten",
-                            "-trim",
-                            "+repage",
-                            "png:" + output_path,
-                        ]
-
-                    if magick_cmd:
-                        result = subprocess.run(
-                            magick_cmd,
-                            capture_output=True,
-                            text=True,
-                            timeout=30,
-                        )
-
-                        if result.returncode == 0 and os.path.exists(output_path):
-                            # Verify it's actually a PNG
-                            with open(output_path, "rb") as f:
-                                header = f.read(8)
-                                if header[:4] == b"\x89PNG":
-                                    return True
-                            print(f"    ⚠️  Output is not PNG format")
-                            return False
-
-        except subprocess.TimeoutExpired:
-            print(f"    ⚠️  WMF conversion timeout")
-            return False
-        except Exception as e:
-            print(f"    ⚠️  LibreOffice conversion error: {e}")
-
-    # Fallback: Try ImageMagick directly (needs WMF delegates)
-    try:
-        magick_cmd = None
-        if shutil.which("magick"):
-            magick_cmd = ["magick", wmf_path, "png:" + output_path]
-        elif shutil.which("convert"):
-            magick_cmd = ["convert", wmf_path, "png:" + output_path]
-        else:
-            print(f"    ⚠️  No conversion tools found - cannot convert WMF")
-            return False
-
-        result = subprocess.run(
-            magick_cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        if result.returncode == 0 and os.path.exists(output_path):
-            # Verify it's actually a PNG
-            with open(output_path, "rb") as f:
-                header = f.read(8)
-                if header[:4] == b"\x89PNG":
-                    return True
-            print(f"    ⚠️  Output is not PNG format")
-            return False
-        else:
-            print(f"    ⚠️  WMF conversion failed: {result.stderr}")
-            return False
-    except subprocess.TimeoutExpired:
-        print(f"    ⚠️  WMF conversion timeout")
-        return False
-    except Exception as e:
-        print(f"    ⚠️  WMF conversion error: {e}")
-        return False
-
-
-def extract_and_save_image(image_part, image_index, config, export_root, section_path):
-    """Extract image and save to pictures directory with hierarchy.
-
-    Args:
-        image_part: The image part from the DOCX
-        image_index: Index number for the image filename
-        config: Book configuration dict
-        export_root: Root export directory (e.g., "export")
-        section_path: Human-readable section path (e.g., "intro/overview")
-
-    Returns:
-        (filename, logical_path) tuple
-    """
-    # Build physical path based on pictures_location config
-    pictures_location = config.get("pictures_location", "root")
-    lang = config.get("language", "eng")
-    book_id = config["canonical_id"]
-
-    if pictures_location == "root":
-        # pictures/{lang}/{book_id}/{section_path}/
-        pictures_dir = os.path.join(
-            export_root, "pictures", lang, book_id, section_path
-        )
-    elif pictures_location == "book":
-        # {lang}/{book_id}/pictures/{section_path}/
-        pictures_dir = os.path.join(
-            export_root, lang, book_id, "pictures", section_path
-        )
-    else:  # chapter
-        # {lang}/{book_id}/{chapter}/pictures/
-        # For chapter location, section_path is just used for the chapter part
-        chapter_part = (
-            section_path.split("/")[0] if "/" in section_path else section_path
-        )
-        pictures_dir = os.path.join(
-            export_root, lang, book_id, chapter_part, "pictures"
-        )
-
-    os.makedirs(pictures_dir, exist_ok=True)
-
-    # Always use .png extension for consistency
-    ext = "png"
-
-    # Save image
-    image_filename = f"image_{image_index:03d}.{ext}"
-    image_path = os.path.join(pictures_dir, image_filename)
-
-    # Get image data
-    image_data = image_part.blob
-
-    # Check if it's WMF and needs conversion
-    if is_wmf_image(image_data):
-        # Save as temporary WMF file
-        wmf_path = image_path + ".wmf.tmp"
-        with open(wmf_path, "wb") as f:
-            f.write(image_data)
-
-        # Convert to PNG
-        if convert_wmf_to_png(wmf_path, image_path):
-            # Backup original WMF
-            backup_path = image_path + ".wmf.backup"
-            os.rename(wmf_path, backup_path)
-        else:
-            # Conversion failed, save as-is
-            os.remove(wmf_path)
-            with open(image_path, "wb") as f:
-                f.write(image_data)
-    else:
-        # Regular image, save directly then convert to PNG if needed
-        with open(image_path, "wb") as f:
-            f.write(image_data)
-
-        # Convert non-PNG images (e.g., JPEG) to PNG
-        content_type = image_part.content_type
-        if "png" not in content_type:
-            try:
-                from PIL import Image
-
-                img = Image.open(image_path)
-                img.save(image_path, "PNG")
-            except ImportError:
-                pass  # Pillow not installed, file keeps original format with .png ext
-            except Exception:
-                pass  # Conversion failed, keep as-is
-
-    # Post-process: auto-crop whitespace and limit resolution
-    postprocess_image(image_path)
-
-    # Build logical path for JSON references (relative to section)
-    logical_path = f"pictures/{section_path}/{image_filename}"
-    return image_filename, logical_path
-
-
-def extract_and_save_image_markdown(image_part, image_index, output_dir, chapter_dir):
-    """Extract image and save for markdown output. Returns relative path or None."""
-    pictures_dir = os.path.join(output_dir, chapter_dir, "pictures")
-    os.makedirs(pictures_dir, exist_ok=True)
-
-    # Always use .png extension for consistency
-    ext = "png"
-
-    image_filename = f"image_{image_index:03d}.{ext}"
-    image_path = os.path.join(pictures_dir, image_filename)
-    image_data = image_part.blob
-
-    # Check if it's WMF and needs conversion
-    if is_wmf_image(image_data):
-        wmf_path = image_path + ".wmf.tmp"
-        with open(wmf_path, "wb") as f:
-            f.write(image_data)
-
-        if convert_wmf_to_png(wmf_path, image_path):
-            backup_path = image_path + ".wmf.backup"
-            os.rename(wmf_path, backup_path)
-        else:
-            os.remove(wmf_path)
-            with open(image_path, "wb") as f:
-                f.write(image_data)
-    else:
-        with open(image_path, "wb") as f:
-            f.write(image_data)
-
-        # Convert non-PNG images (e.g., JPEG) to PNG
-        content_type = image_part.content_type
-        if "png" not in content_type:
-            try:
-                from PIL import Image
-
-                img = Image.open(image_path)
-                img.save(image_path, "PNG")
-            except (ImportError, Exception):
-                pass  # Keep as-is if conversion fails
-
-    # Post-process: auto-crop whitespace and limit resolution
-    final_path = os.path.join(pictures_dir, image_filename)
-    postprocess_image(final_path)
-
-    return f"pictures/{image_filename}"
-
-
 def save_markdown_file(
     filepath, content_items, chapter_num, section_num=None, subsection_num=None
 ):
@@ -2108,60 +1882,6 @@ def create_navigation_index(
         json.dump(index_data, f, indent=2)
 
 
-def validate_images(json_dir, images_dir):
-    """Validate image references after generation.
-
-    Checks that every JSON image reference has a file on disk, and reports
-    any orphaned image files not referenced by any JSON.
-    """
-    import glob as glob_mod
-
-    json_refs = set()
-    for jf in glob_mod.glob(f"{json_dir}/**/*.json", recursive=True):
-        try:
-            with open(jf, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            for item in data.get("content", []):
-                if item.get("type") == "image" and item.get("path"):
-                    json_refs.add(item["path"])
-        except (json.JSONDecodeError, KeyError):
-            continue
-
-    disk_files = set()
-    for root, dirs, files in os.walk(images_dir):
-        for f in files:
-            if f.endswith((".png", ".jpg")) and ".backup" not in f:
-                rel = os.path.relpath(os.path.join(root, f), images_dir)
-                disk_files.add(f"pictures/{rel}")
-
-    missing_on_disk = json_refs - disk_files
-    orphaned_on_disk = disk_files - json_refs
-
-    print("\n" + "=" * 80)
-    print("POST-GENERATION IMAGE VALIDATION")
-    print("=" * 80)
-
-    if missing_on_disk:
-        print(f"\nERROR: {len(missing_on_disk)} JSON refs with no file on disk:")
-        for p in sorted(missing_on_disk):
-            print(f"  {p}")
-    else:
-        print("\nAll JSON image references have matching files on disk.")
-
-    if orphaned_on_disk:
-        print(f"\nWARNING: {len(orphaned_on_disk)} image files not referenced in JSON:")
-        for p in sorted(orphaned_on_disk):
-            print(f"  {p}")
-    else:
-        print("No orphaned image files found.")
-
-    if not missing_on_disk and not orphaned_on_disk:
-        print("\nAll image checks passed.")
-    print("=" * 80)
-
-    return len(missing_on_disk) == 0
-
-
 def build_book_json():
     """Build book JSON files and markdown from Word document (md2rag format)."""
     print("=" * 80)
@@ -2169,9 +1889,12 @@ def build_book_json():
     print("=" * 80)
     print()
 
+    # Resolve input file paths from config
+    input_docx, exceptions_file = resolve_paths_from_config()
+
     # Load book configuration
     print("Loading book configuration...")
-    config = load_book_config(INPUT_DOCX)
+    config = load_book_config(input_docx)
     print(f"  Book: {config['title']}")
     print(f"  Canonical ID: {config['canonical_id']}")
     print(f"  Language: {config['language']}")
@@ -2180,7 +1903,7 @@ def build_book_json():
 
     # Load exceptions
     print("Loading exceptions configuration...")
-    exceptions = load_exceptions(EXCEPTIONS_FILE)
+    exceptions = load_exceptions(exceptions_file)
     if exceptions:
         print(f"✓ Loaded {len(exceptions)} exception(s)")
     else:
@@ -2188,8 +1911,8 @@ def build_book_json():
     print()
 
     # Load document
-    print(f"Loading document: {INPUT_DOCX}")
-    doc = Document(INPUT_DOCX)
+    print(f"Loading document: {input_docx}")
+    doc = Document(input_docx)
     print(f"✓ Loaded {len(doc.paragraphs)} paragraphs, {len(doc.tables)} tables")
     print()
 
@@ -2204,9 +1927,9 @@ def build_book_json():
         parse_document_structure(doc, exceptions, expected_sequence)
     )
 
-    # Reconcile frame-positioned images with orphan captions
-    print("\nReconciling image-caption pairs...")
-    reconcile_captions_and_images(
+    # Analyse image-caption pairing (non-mutating — records relocations only)
+    print("\nAnalysing image-caption pairs...")
+    reconciliation = reconcile_captions_and_images(
         chapters, chapter_elements, section_elements, subsection_elements
     )
 
@@ -2282,9 +2005,9 @@ def build_book_json():
             shutil.rmtree(MARKDOWN_DIR)
         os.makedirs(MARKDOWN_DIR, exist_ok=True)
 
-    # Track images for markdown and manifest
+    # Track images for markdown and image manifest
     image_paths = {}
-    manifest_data = {}  # For pictures manifest.json
+    image_manifest = []  # For image_manifest.json (used by process_images.py)
 
     # Process each chapter
     print("\nProcessing chapters...")
@@ -2321,44 +2044,43 @@ def build_book_json():
                 elif elem_type == "table_cell":
                     intro_content.append(extract_table_cell_json(elem))
                 elif elem_type == "image":
-                    # elem is a tuple: (image_part, image_index, alt, caption)
+                    # elem is a tuple: (image_part, image_index, alt, caption, rId, content_type)
                     if isinstance(elem, tuple) and len(elem) >= 2:
-                        image_part = elem[0]
                         img_idx = elem[1]
                         alt_text = elem[2] if len(elem) > 2 else ""
                         caption_text = elem[3] if len(elem) > 3 else ""
+                        r_id = elem[4] if len(elem) > 4 else ""
+                        content_type = elem[5] if len(elem) > 5 else ""
 
-                        # Save to JSON directory with new structure
-                        result = extract_and_save_image(
-                            image_part, img_idx, config, export_root, intro_section_path
+                        # Compute deterministic image path (no file I/O)
+                        image_filename = f"image_{img_idx:03d}.png"
+                        image_rel_path = (
+                            f"pictures/{intro_section_path}/{image_filename}"
                         )
-                        if result:
-                            image_filename, image_rel_path = result
-                            intro_content.append(
-                                extract_image_json(
-                                    image_rel_path, alt_text, caption_text
-                                )
-                            )
-                            # Add to manifest
-                            manifest_data[f"{intro_section_path}/{image_filename}"] = {
+                        intro_content.append(
+                            extract_image_json(image_rel_path, alt_text, caption_text)
+                        )
+
+                        # Add to image manifest for process_images.py
+                        image_manifest.append(
+                            {
+                                "image_index": img_idx,
+                                "rId": r_id,
+                                "content_type": content_type,
+                                "section_path": intro_section_path,
+                                "filename": image_filename,
                                 "alt": alt_text,
                                 "caption": caption_text,
+                                "chapter_dir": f"chapter_{chapter_num:02d}",
                             }
+                        )
 
-                        # Also save to markdown directory if enabled
+                        # Track markdown image path
                         if ENABLE_MARKDOWN:
-                            md_img_path = extract_and_save_image_markdown(
-                                image_part,
-                                img_idx,
-                                MARKDOWN_DIR,
-                                f"chapter_{chapter_num:02d}",
-                            )
-                            if md_img_path:
-                                if (chapter_num, None, None) not in image_paths:
-                                    image_paths[(chapter_num, None, None)] = []
-                                image_paths[(chapter_num, None, None)].append(
-                                    md_img_path
-                                )
+                            md_img_path = f"pictures/{image_filename}"
+                            if (chapter_num, None, None) not in image_paths:
+                                image_paths[(chapter_num, None, None)] = []
+                            image_paths[(chapter_num, None, None)].append(md_img_path)
 
         # Save intro with md2rag metadata
         if intro_content:
@@ -2420,45 +2142,39 @@ def build_book_json():
                         section_content.append(extract_table_cell_json(elem))
                     elif elem_type == "image":
                         if isinstance(elem, tuple) and len(elem) >= 2:
-                            image_part = elem[0]
                             img_idx = elem[1]
                             alt_text = elem[2] if len(elem) > 2 else ""
                             caption_text = elem[3] if len(elem) > 3 else ""
+                            r_id = elem[4] if len(elem) > 4 else ""
+                            content_type = elem[5] if len(elem) > 5 else ""
 
-                            result = extract_and_save_image(
-                                image_part, img_idx, config, export_root, section_path
-                            )
-                            if result:
-                                image_filename, image_rel_path = result
-                                section_content.append(
-                                    extract_image_json(
-                                        image_rel_path, alt_text, caption_text
-                                    )
+                            image_filename = f"image_{img_idx:03d}.png"
+                            image_rel_path = f"pictures/{section_path}/{image_filename}"
+                            section_content.append(
+                                extract_image_json(
+                                    image_rel_path, alt_text, caption_text
                                 )
-                                manifest_data[f"{section_path}/{image_filename}"] = {
+                            )
+
+                            image_manifest.append(
+                                {
+                                    "image_index": img_idx,
+                                    "rId": r_id,
+                                    "content_type": content_type,
+                                    "section_path": section_path,
+                                    "filename": image_filename,
                                     "alt": alt_text,
                                     "caption": caption_text,
+                                    "chapter_dir": f"chapter_{chapter_num:02d}",
                                 }
+                            )
 
                             if ENABLE_MARKDOWN:
-                                md_img_path = extract_and_save_image_markdown(
-                                    image_part,
-                                    img_idx,
-                                    MARKDOWN_DIR,
-                                    f"chapter_{chapter_num:02d}",
-                                )
-                                if md_img_path:
-                                    if (
-                                        chapter_num,
-                                        section_num,
-                                        None,
-                                    ) not in image_paths:
-                                        image_paths[
-                                            (chapter_num, section_num, None)
-                                        ] = []
-                                    image_paths[
-                                        (chapter_num, section_num, None)
-                                    ].append(md_img_path)
+                                md_img_path = f"pictures/{image_filename}"
+                                md_key = (chapter_num, section_num, None)
+                                if md_key not in image_paths:
+                                    image_paths[md_key] = []
+                                image_paths[md_key].append(md_img_path)
 
             # Save section with md2rag metadata
             position = position_lookup.get((chapter_num, section_num, None), 0)
@@ -2525,48 +2241,45 @@ def build_book_json():
                                 subsection_content.append(extract_table_cell_json(elem))
                             elif elem_type == "image":
                                 if isinstance(elem, tuple) and len(elem) >= 2:
-                                    image_part = elem[0]
                                     img_idx = elem[1]
                                     alt_text = elem[2] if len(elem) > 2 else ""
                                     caption_text = elem[3] if len(elem) > 3 else ""
+                                    r_id = elem[4] if len(elem) > 4 else ""
+                                    content_type = elem[5] if len(elem) > 5 else ""
 
-                                    result = extract_and_save_image(
-                                        image_part,
-                                        img_idx,
-                                        config,
-                                        export_root,
-                                        subsection_path,
+                                    image_filename = f"image_{img_idx:03d}.png"
+                                    image_rel_path = (
+                                        f"pictures/{subsection_path}/{image_filename}"
                                     )
-                                    if result:
-                                        image_filename, image_rel_path = result
-                                        subsection_content.append(
-                                            extract_image_json(
-                                                image_rel_path, alt_text, caption_text
-                                            )
+                                    subsection_content.append(
+                                        extract_image_json(
+                                            image_rel_path, alt_text, caption_text
                                         )
-                                        manifest_data[
-                                            f"{subsection_path}/{image_filename}"
-                                        ] = {
+                                    )
+
+                                    image_manifest.append(
+                                        {
+                                            "image_index": img_idx,
+                                            "rId": r_id,
+                                            "content_type": content_type,
+                                            "section_path": subsection_path,
+                                            "filename": image_filename,
                                             "alt": alt_text,
                                             "caption": caption_text,
+                                            "chapter_dir": f"chapter_{chapter_num:02d}",
                                         }
+                                    )
 
                                     if ENABLE_MARKDOWN:
-                                        md_img_path = extract_and_save_image_markdown(
-                                            image_part,
-                                            img_idx,
-                                            MARKDOWN_DIR,
-                                            f"chapter_{chapter_num:02d}",
+                                        md_img_path = f"pictures/{image_filename}"
+                                        md_key = (
+                                            chapter_num,
+                                            section_num,
+                                            subsection_num,
                                         )
-                                        if md_img_path:
-                                            key = (
-                                                chapter_num,
-                                                section_num,
-                                                subsection_num,
-                                            )
-                                            if key not in image_paths:
-                                                image_paths[key] = []
-                                            image_paths[key].append(md_img_path)
+                                        if md_key not in image_paths:
+                                            image_paths[md_key] = []
+                                        image_paths[md_key].append(md_img_path)
 
                     # Save subsection with md2rag metadata
                     position = position_lookup.get(
@@ -2629,46 +2342,43 @@ def build_book_json():
     print("\nCreating book manifest...")
     create_book_toml(config, json_book_dir)
 
-    # Create pictures manifest.json if we have images
-    pictures_dir = None
-    if manifest_data:
-        print("Creating pictures manifest...")
-        if pictures_location == "root":
-            pictures_dir = os.path.join(export_root, "pictures", lang, book_id)
-        else:
-            pictures_dir = os.path.join(json_book_dir, "pictures")
-        manifest_path = os.path.join(pictures_dir, "manifest.json")
-        os.makedirs(pictures_dir, exist_ok=True)
+    # Write image_manifest.json for process_images.py
+    if image_manifest:
+        manifest_path = os.path.join(json_book_dir, "image_manifest.json")
         with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest_data, f, indent=2)
-        print(f"✓ Created {manifest_path}")
+            json.dump({"images": image_manifest}, f, indent=2)
+        print(f"\n✓ Image manifest: {manifest_path} ({len(image_manifest)} images)")
 
     print("\n" + "=" * 80)
     print("✓ Book JSON (md2rag format) and Markdown generation complete!")
     print(f"✓ JSON files: {json_book_dir}/")
-    if pictures_dir:
-        print(f"✓ Pictures: {pictures_dir}/")
     if ENABLE_MARKDOWN:
         print(f"✓ Markdown files: {MARKDOWN_DIR}/")
+    print(f"✓ Run 'make images' to extract and process image files")
     print("=" * 80)
 
-    # Validate image references against files on disk
-    if pictures_location == "root":
-        images_root = os.path.join(export_root, "pictures", lang, book_id)
-    else:
-        images_root = os.path.join(json_book_dir, "pictures")
-    if os.path.exists(images_root):
-        validate_images(json_book_dir, images_root)
+    # Image validation is skipped here — it runs in process_images.py after extraction
+    validation = {}
 
     # Validate image index sequence to detect misplaced pairings
     print("\nValidating image sequence...")
-    validate_image_sequence(
+    sequence = validate_image_sequence(
         chapters,
         chapter_elements,
         section_elements,
         subsection_elements,
-        log_dir=json_book_dir,
     )
+
+    # Write postprocess.json with all corrections and validation results
+    postprocess = {
+        "caption_reconciliation": reconciliation,
+        "image_sequence": sequence,
+        "image_validation": validation,
+    }
+    postprocess_path = os.path.join(json_book_dir, "postprocess.json")
+    with open(postprocess_path, "w", encoding="utf-8") as f:
+        json.dump(postprocess, f, indent=2)
+    print(f"\n✓ Postprocess data: {postprocess_path}")
 
 
 if __name__ == "__main__":
