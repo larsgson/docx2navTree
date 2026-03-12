@@ -92,6 +92,7 @@ htmlcov/
 coverage/
 prev/
 lang-store/*/**
+previous/
 
 # Temporary files
 *.tmp

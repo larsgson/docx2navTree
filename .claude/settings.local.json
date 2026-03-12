@@ -30,7 +30,8 @@
       "Bash(echo \"EXIT: $EXIT\")",
       "Bash(ls export/kir/untitled/*.json)",
       "Bash(./venv/bin/python3:*)",
-      "Bash(ls -d export/kir/animal_health_handbook/*/)"
+      "Bash(ls -d export/kir/animal_health_handbook/*/)",
+      "Bash(ls export/kir/animal_health_handbook/03_*)"
     ]
   }
 }

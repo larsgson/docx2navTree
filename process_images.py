@@ -19,9 +19,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from build_book import load_book_config
-
-INPUT_DOCX = "original-book.docx"
+from build_book import load_book_config, resolve_paths_from_config
 EXPORT_DIR = "export"
 MARKDOWN_DIR = "export_md"
 
@@ -175,7 +173,8 @@ def extract_and_save_image(image_data, content_type, output_path):
     """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    if is_wmf_image(image_data):
+    wmf_failed = False
+    if is_wmf_image(image_data) or "wmf" in content_type.lower():
         wmf_path = output_path + ".wmf.tmp"
         with open(wmf_path, "wb") as f:
             f.write(image_data)
@@ -188,21 +187,33 @@ def extract_and_save_image(image_data, content_type, output_path):
             os.remove(wmf_path)
             with open(output_path, "wb") as f:
                 f.write(image_data)
+            wmf_failed = True
     else:
         with open(output_path, "wb") as f:
             f.write(image_data)
 
-        # Convert non-PNG to PNG
-        if "png" not in content_type:
-            try:
-                from PIL import Image
+        # Try to convert non-PNG to PNG, or verify PNG is valid
+        try:
+            from PIL import Image
 
-                img = Image.open(output_path)
+            img = Image.open(output_path)
+            img.load()
+            if "png" not in content_type:
                 img.save(output_path, "PNG")
-            except (ImportError, Exception):
-                pass
+        except (ImportError, Exception):
+            # PIL can't handle this file (SVG, OLE, EMF, etc.)
+            # Try LibreOffice conversion chain as fallback
+            tmp_src = output_path + ".src.tmp"
+            os.rename(output_path, tmp_src)
+            if convert_wmf_to_png(tmp_src, output_path):
+                os.remove(tmp_src)
+            else:
+                # Conversion failed, restore raw bytes
+                os.rename(tmp_src, output_path)
+                wmf_failed = True
 
-    postprocess_image(output_path)
+    if not wmf_failed:
+        postprocess_image(output_path)
     return True
 
 
@@ -266,8 +277,11 @@ def process_images():
     print("PROCESS IMAGES")
     print("=" * 80)
 
+    # Resolve input DOCX path from book_config.toml
+    input_docx, _ = resolve_paths_from_config()
+
     # Load config (reuse build_book's config loader for canonical_id derivation)
-    config = load_book_config(INPUT_DOCX)
+    config = load_book_config(input_docx)
     lang = config.get("language", "eng")
     book_id = config["canonical_id"]
     pictures_location = config.get("pictures_location", "root")
@@ -290,14 +304,14 @@ def process_images():
     print(f"Found {len(images)} images in manifest")
 
     # Open DOCX to extract image blobs
-    if not os.path.exists(INPUT_DOCX):
-        print(f"Error: {INPUT_DOCX} not found.")
+    if not os.path.exists(input_docx):
+        print(f"Error: {input_docx} not found.")
         sys.exit(1)
 
     from docx import Document
 
-    print(f"Opening {INPUT_DOCX}...")
-    doc = Document(INPUT_DOCX)
+    print(f"Opening {input_docx}...")
+    doc = Document(input_docx)
 
     # Build rId -> image_part lookup
     related_parts = doc.part.related_parts
@@ -354,9 +368,10 @@ def process_images():
         if processed % 50 == 0:
             print(f"  Processed {processed} images...")
 
-        # Also save to markdown directory
-        if os.path.exists(MARKDOWN_DIR) and chapter_dir:
-            md_pictures_dir = os.path.join(MARKDOWN_DIR, chapter_dir, "pictures")
+        # Also save to markdown directory (under export_md/{lang}/)
+        md_lang_dir = os.path.join(MARKDOWN_DIR, lang)
+        if os.path.exists(md_lang_dir) and chapter_dir:
+            md_pictures_dir = os.path.join(md_lang_dir, chapter_dir, "pictures")
             md_output_path = os.path.join(md_pictures_dir, filename)
             if not os.path.exists(md_output_path):
                 # Copy from already-processed JSON image

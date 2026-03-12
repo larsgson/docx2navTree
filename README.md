@@ -40,22 +40,27 @@ export/
 ├── {lang}/                           # Language folder (e.g., "eng")
 │   └── {book_id}/                    # Book ID folder
 │       ├── _book.toml                # Book manifest
-│       ├── 01_chapter_name/
-│       │   ├── 00_intro.json         # Chapter intro
-│       │   ├── 01_section_name.json  # Section content
-│       │   └── 02_another_section.json
-│       └── 02_another_chapter/
+│       ├── 01/                       # Chapter 1
+│       │   ├── intro.json            # Chapter intro
+│       │   ├── 01.json               # Section 1.1
+│       │   └── 02.json               # Section 1.2
+│       └── 02/                       # Chapter 2
 └── pictures/                         # Pictures at root level
     └── {lang}/
         └── {book_id}/
-            └── {section_path}/       # Mirrors section hierarchy
-                ├── image_001.png
-                └── manifest.json     # Image metadata
+            └── 01/                   # Mirrors chapter/section numbers
+                └── 01/
+                    ├── 001.png
+                    └── manifest.json
 
 export_md/                            # Markdown export
-├── README.md
-├── style.css
-└── chapter_XX/
+└── {lang}/
+    ├── README.md
+    ├── style.css
+    └── 01/                           # Chapter 1
+        ├── intro.md
+        ├── 01.md                     # Section 1.1
+        └── 01_01.md                  # Subsection 1.1.1
 ```
 
 ## JSON Format (md2rag compatible)
@@ -75,16 +80,16 @@ Each section JSON file contains:
 
 ```json
 {
-  "id": "my-book-title/01_chapter_name/01_section_name",
+  "id": "my-book-title/01/01",
   "title": "Section Title",
   "section_id": "chapter_name/section_name",
   "links": [
-    {"type": "previous", "target": "my-book-title/01_chapter_name/00_intro"},
-    {"type": "next", "target": "my-book-title/01_chapter_name/02_another_section"}
+    {"type": "previous", "target": "my-book-title/01/intro"},
+    {"type": "next", "target": "my-book-title/01/02"}
   ],
   "content": [
     {"type": "paragraph", "text": "Paragraph content..."},
-    {"type": "image", "path": "pictures/chapter_name/section_name/image_001.png", "alt": "", "caption": ""},
+    {"type": "image", "path": "pictures/01/01/001.png", "alt": "", "caption": ""},
     {"type": "table", "rows": [{"cells": [{"text": "Cell content"}]}]}
   ]
 }

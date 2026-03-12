@@ -211,7 +211,7 @@ def build_document_order(chapters, title_map):
         chapter_key = (chapter_num, "chapter")
         chapter_title = title_map.get(chapter_key, f"Chapter {chapter_num}")
         chapter_slug = slugify(chapter_title)
-        chapter_dir_name = f"{chapter_num:02d}_{chapter_slug}"
+        chapter_dir_name = f"{chapter_num:02d}"
 
         # Add intro (section 0)
         intro_title = chapter_title
@@ -222,7 +222,7 @@ def build_document_order(chapters, title_map):
                 None,
                 intro_title,
                 chapter_dir_name,
-                "00_intro",
+                "intro",
                 chapter_slug,
                 None,
                 None,
@@ -234,7 +234,7 @@ def build_document_order(chapters, title_map):
             section_key = (chapter_num, section_num)
             section_title = title_map.get(section_key, f"{chapter_num}.{section_num}")
             section_slug = slugify(section_title)
-            section_file_name = f"{section_num:02d}_{section_slug}"
+            section_file_name = f"{section_num:02d}"
 
             order.append(
                 (
@@ -260,7 +260,7 @@ def build_document_order(chapters, title_map):
                 )
                 subsection_slug = slugify(subsection_title)
                 subsection_file_name = (
-                    f"{section_num:02d}_{subsection_num:02d}_{subsection_slug}"
+                    f"{section_num:02d}_{subsection_num:02d}"
                 )
 
                 order.append(
@@ -1601,21 +1601,21 @@ def create_markdown_index(chapters, markdown_dir):
         if chapter_data.get("sections"):
             chapter_title = f"{chapter_num}.0"
 
-        lines.append(f"### [{chapter_title}](chapter_{chapter_num:02d}/intro.md)")
+        lines.append(f"### [{chapter_title}]({chapter_num:02d}/intro.md)")
         lines.append("")
 
         # List sections
         for section_num in sorted(chapter_data["sections"].keys()):
             section_data = chapter_data["sections"][section_num]
             lines.append(
-                f"- [{chapter_num}.{section_num}](chapter_{chapter_num:02d}/section_{section_num:02d}.md)"
+                f"- [{chapter_num}.{section_num}]({chapter_num:02d}/{section_num:02d}.md)"
             )
 
             # List subsections
             if section_data.get("subsections"):
                 for subsection_num in sorted(section_data["subsections"].keys()):
                     lines.append(
-                        f"  - [{chapter_num}.{section_num}.{subsection_num}](chapter_{chapter_num:02d}/section_{section_num:02d}_{subsection_num:02d}.md)"
+                        f"  - [{chapter_num}.{section_num}.{subsection_num}]({chapter_num:02d}/{section_num:02d}_{subsection_num:02d}.md)"
                     )
 
         lines.append("")
@@ -2000,10 +2000,11 @@ def build_book_json():
             shutil.rmtree(pictures_root)
 
     if ENABLE_MARKDOWN:
-        print(f"Cleaning markdown directory: {MARKDOWN_DIR}")
-        if os.path.exists(MARKDOWN_DIR):
-            shutil.rmtree(MARKDOWN_DIR)
-        os.makedirs(MARKDOWN_DIR, exist_ok=True)
+        md_lang_dir = os.path.join(MARKDOWN_DIR, lang)
+        print(f"Cleaning markdown directory: {md_lang_dir}")
+        if os.path.exists(md_lang_dir):
+            shutil.rmtree(md_lang_dir)
+        os.makedirs(md_lang_dir, exist_ok=True)
 
     # Track images for markdown and image manifest
     image_paths = {}
@@ -2016,7 +2017,7 @@ def build_book_json():
         chapter_key = (chapter_num, "chapter")
         chapter_title = title_map.get(chapter_key, f"Chapter {chapter_num}")
         chapter_slug = slugify(chapter_title)
-        chapter_dir_name = f"{chapter_num:02d}_{chapter_slug}"
+        chapter_dir_name = f"{chapter_num:02d}"
 
         print(f"\n  Chapter {chapter_num} ({chapter_dir_name}):")
 
@@ -2025,15 +2026,15 @@ def build_book_json():
 
         md_chapter_dir = None
         if ENABLE_MARKDOWN:
-            md_chapter_dir = os.path.join(MARKDOWN_DIR, f"chapter_{chapter_num:02d}")
+            md_chapter_dir = os.path.join(md_lang_dir, f"{chapter_num:02d}")
             os.makedirs(md_chapter_dir, exist_ok=True)
 
         chapter_data = chapters[chapter_num]
 
         # Build intro section (chapter-level elements)
         intro_content = []
-        # Section path for intro: chapter_slug/intro
-        intro_section_path = f"{chapter_slug}/intro"
+        # Section path for intro: NN/intro
+        intro_section_path = f"{chapter_num:02d}/intro"
 
         if chapter_num in chapter_elements:
             for elem_type, elem in chapter_elements[chapter_num]:
@@ -2053,7 +2054,7 @@ def build_book_json():
                         content_type = elem[5] if len(elem) > 5 else ""
 
                         # Compute deterministic image path (no file I/O)
-                        image_filename = f"image_{img_idx:03d}.png"
+                        image_filename = f"{img_idx:03d}.png"
                         image_rel_path = (
                             f"pictures/{intro_section_path}/{image_filename}"
                         )
@@ -2071,7 +2072,7 @@ def build_book_json():
                                 "filename": image_filename,
                                 "alt": alt_text,
                                 "caption": caption_text,
-                                "chapter_dir": f"chapter_{chapter_num:02d}",
+                                "chapter_dir": f"{chapter_num:02d}",
                             }
                         )
 
@@ -2084,7 +2085,7 @@ def build_book_json():
 
         # Save intro with md2rag metadata
         if intro_content:
-            intro_file_name = "00_intro"
+            intro_file_name = "intro"
             position = position_lookup.get((chapter_num, 0, None), 0)
             prev_id, next_id = get_prev_next_ids(position)
             # Human-readable section_id
@@ -2124,9 +2125,9 @@ def build_book_json():
             section_key = (chapter_num, section_num)
             section_title = title_map.get(section_key, f"{chapter_num}.{section_num}")
             section_slug = slugify(section_title)
-            section_file_name = f"{section_num:02d}_{section_slug}"
-            # Section path for pictures: chapter_slug/section_slug
-            section_path = f"{chapter_slug}/{section_slug}"
+            section_file_name = f"{section_num:02d}"
+            # Section path for pictures: NN/SS
+            section_path = f"{chapter_num:02d}/{section_num:02d}"
 
             # Build section content
             section_content = []
@@ -2148,7 +2149,7 @@ def build_book_json():
                             r_id = elem[4] if len(elem) > 4 else ""
                             content_type = elem[5] if len(elem) > 5 else ""
 
-                            image_filename = f"image_{img_idx:03d}.png"
+                            image_filename = f"{img_idx:03d}.png"
                             image_rel_path = f"pictures/{section_path}/{image_filename}"
                             section_content.append(
                                 extract_image_json(
@@ -2165,7 +2166,7 @@ def build_book_json():
                                     "filename": image_filename,
                                     "alt": alt_text,
                                     "caption": caption_text,
-                                    "chapter_dir": f"chapter_{chapter_num:02d}",
+                                    "chapter_dir": f"{chapter_num:02d}",
                                 }
                             )
 
@@ -2202,7 +2203,7 @@ def build_book_json():
                 key = (chapter_num, section_num)
                 if key in section_elements:
                     md_file = os.path.join(
-                        md_chapter_dir, f"section_{section_num:02d}.md"
+                        md_chapter_dir, f"{section_num:02d}.md"
                     )
                     md_content = list(section_elements[key])
                     img_key = (chapter_num, section_num, None)
@@ -2210,7 +2211,7 @@ def build_book_json():
                         for img_path in image_paths[img_key]:
                             md_content.append(("image", img_path))
                     save_markdown_file(md_file, md_content, chapter_num, section_num)
-                    print(f"    ✓ section_{section_num:02d}.md")
+                    print(f"    ✓ {section_num:02d}.md")
 
             # Process subsections
             if section_data["subsections"]:
@@ -2223,10 +2224,10 @@ def build_book_json():
                     )
                     subsection_slug = slugify(subsection_title)
                     subsection_file_name = (
-                        f"{section_num:02d}_{subsection_num:02d}_{subsection_slug}"
+                        f"{section_num:02d}_{subsection_num:02d}"
                     )
-                    # Section path for pictures: chapter_slug/section_slug/subsection_slug
-                    subsection_path = f"{chapter_slug}/{section_slug}/{subsection_slug}"
+                    # Section path for pictures: NN/SS_SS
+                    subsection_path = f"{chapter_num:02d}/{section_num:02d}_{subsection_num:02d}"
 
                     subsection_content = []
 
@@ -2247,7 +2248,7 @@ def build_book_json():
                                     r_id = elem[4] if len(elem) > 4 else ""
                                     content_type = elem[5] if len(elem) > 5 else ""
 
-                                    image_filename = f"image_{img_idx:03d}.png"
+                                    image_filename = f"{img_idx:03d}.png"
                                     image_rel_path = (
                                         f"pictures/{subsection_path}/{image_filename}"
                                     )
@@ -2266,7 +2267,7 @@ def build_book_json():
                                             "filename": image_filename,
                                             "alt": alt_text,
                                             "caption": caption_text,
-                                            "chapter_dir": f"chapter_{chapter_num:02d}",
+                                            "chapter_dir": f"{chapter_num:02d}",
                                         }
                                     )
 
@@ -2316,7 +2317,7 @@ def build_book_json():
                         if key in subsection_elements:
                             md_file = os.path.join(
                                 md_chapter_dir,
-                                f"section_{section_num:02d}_{subsection_num:02d}.md",
+                                f"{section_num:02d}_{subsection_num:02d}.md",
                             )
                             md_content = list(subsection_elements[key])
                             img_key = (chapter_num, section_num, subsection_num)
@@ -2331,12 +2332,12 @@ def build_book_json():
                                 subsection_num,
                             )
                             print(
-                                f"      ✓ section_{section_num:02d}_{subsection_num:02d}.md"
+                                f"      ✓ {section_num:02d}_{subsection_num:02d}.md"
                             )
 
     # Create markdown index and CSS
     if ENABLE_MARKDOWN:
-        create_markdown_index(chapters, MARKDOWN_DIR)
+        create_markdown_index(chapters, md_lang_dir)
 
     # Create _book.toml manifest
     print("\nCreating book manifest...")

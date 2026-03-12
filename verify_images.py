@@ -66,7 +66,7 @@ def verify_images():
     for lang_dir, book_dir in books_to_check:
             print(f"\n📚 Checking: {lang_dir.name}/{book_dir.name}")
 
-            # Iterate through all chapter directories (XX_chapter_name format)
+            # Iterate through all chapter directories (XX format)
             for chapter_dir in sorted(book_dir.iterdir()):
                 if not chapter_dir.is_dir():
                     continue
