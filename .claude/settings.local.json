@@ -31,7 +31,11 @@
       "Bash(ls export/kir/untitled/*.json)",
       "Bash(./venv/bin/python3:*)",
       "Bash(ls -d export/kir/animal_health_handbook/*/)",
-      "Bash(ls export/kir/animal_health_handbook/03_*)"
+      "Bash(ls export/kir/animal_health_handbook/03_*)",
+      "Bash(/Users/larsgson/dev/bw/docx2navTree/venv/bin/python3 -c \":*)",
+      "Bash(/Users/larsgson/dev/bw/docx2navTree/venv/bin/python3:*)",
+      "Bash(make images)",
+      "Bash(make verify)"
     ]
   }
 }

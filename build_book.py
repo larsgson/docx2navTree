@@ -344,8 +344,9 @@ def normalize_toc_text(text):
     """Normalize text for TOC parsing."""
     if not text:
         return ""
-    # Remove page numbers and dots
+    # Remove page numbers and dots (dot leaders or tab-separated)
     text = re.sub(r"\s*\.{2,}\s*\d+\s*$", "", text)
+    text = re.sub(r"\s*\t+\s*\d+\s*$", "", text)
     # Clean up whitespace
     text = re.sub(r"\s+", " ", text)
     return text.strip()
@@ -395,13 +396,15 @@ def extract_toc_from_document(doc):
     for para in doc.paragraphs:
         text = para.text.strip()
 
-        # Detect TOC section (entries with dots leading to page numbers)
-        if "....." in text or "....." in text.replace(" ", ""):
+        # Detect TOC section (entries with dots or tabs leading to page numbers)
+        has_dot_leaders = "....." in text or "....." in text.replace(" ", "")
+        has_tab_page_num = "\t" in text and re.search(r"\t\s*\d+\s*$", text)
+        if has_dot_leaders or has_tab_page_num:
             in_toc = True
             consecutive_non_toc = 0
 
         # Stop when we hit substantial content after TOC
-        if in_toc and text and not "..." in text:
+        if in_toc and text and not "..." in text and not has_tab_page_num:
             # Check if this looks like a TOC entry without dots
             if not re.match(r"^\d+\.\d+", text):
                 consecutive_non_toc += 1

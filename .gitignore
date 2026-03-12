@@ -63,6 +63,7 @@ chapters/
 .DS_Store
 *.sublime-workspace
 *.sublime-project
+.claude/
 
 # OS
 .DS_Store
