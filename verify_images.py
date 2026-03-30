@@ -10,10 +10,12 @@ from pathlib import Path
 
 
 def load_current_book_config():
-    """Load language and canonical_id from book_config.toml."""
-    config_path = Path("book_config.toml")
-    if not config_path.exists():
-        return None, None
+    """Load language and canonical_id from config.
+
+    Uses LANG_CODE env var to find lang-store/<lang>/book_config.toml,
+    or falls back to root book_config.toml.
+    """
+    import os
 
     try:
         import tomllib
@@ -23,10 +25,19 @@ def load_current_book_config():
         except ImportError:
             return None, None
 
+    lang = os.environ.get("LANG_CODE")
+    if lang:
+        config_path = Path("lang-store") / lang / "book_config.toml"
+    else:
+        config_path = Path("book_config.toml")
+
+    if not config_path.exists():
+        return None, None
+
     with open(config_path, "rb") as f:
         config = tomllib.load(f)
 
-    return config.get("language", "eng"), config.get("canonical_id")
+    return lang or config.get("language", "eng"), config.get("canonical_id")
 
 
 def verify_images():

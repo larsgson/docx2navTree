@@ -19,7 +19,41 @@ DEFAULT_INPUT_DOCX = "example/sample-book.docx"
 MARKDOWN_DIR = "export_md"
 DEFAULT_EXCEPTIONS_FILE = "example/exceptions.conf"
 BOOK_CONFIG_FILE = "book_config.toml"
+LANG_STORE_DIR = "lang-store"
 ENABLE_MARKDOWN = True  # Enable markdown generation alongside JSON
+
+
+def _get_lang_code():
+    """Get language code from LANG_CODE env var (set by Makefile)."""
+    return os.environ.get("LANG_CODE")
+
+
+def discover_lang_files(lang):
+    """Auto-discover DOCX and exceptions files in lang-store/<lang>/.
+
+    Returns (docx_path, exceptions_path) where exceptions_path may be None.
+    """
+    from pathlib import Path
+    lang_dir = Path(LANG_STORE_DIR) / lang
+    if not lang_dir.is_dir():
+        print(f"Error: language directory {lang_dir} does not exist")
+        print(f"Available languages: {', '.join(sorted(p.name for p in Path(LANG_STORE_DIR).iterdir() if p.is_dir()))}")
+        sys.exit(1)
+
+    # Find .docx file (expect one; warn if multiple)
+    docx_files = sorted(lang_dir.glob("*.docx"))
+    if not docx_files:
+        print(f"Error: no .docx file found in {lang_dir}")
+        sys.exit(1)
+    if len(docx_files) > 1:
+        print(f"Warning: multiple .docx files in {lang_dir}, using: {docx_files[0].name}")
+    docx_path = str(docx_files[0])
+
+    # Find .conf exceptions file (optional)
+    conf_files = sorted(lang_dir.glob("*.conf"))
+    exceptions_path = str(conf_files[0]) if conf_files else None
+
+    return docx_path, exceptions_path
 
 
 # ============================================================================
@@ -69,11 +103,34 @@ def build_section_id(chapter_slug, section_slug=None, subsection_slug=None):
         return f"{chapter_slug}/intro"
 
 
-def resolve_paths_from_config():
-    """Resolve input DOCX and exceptions file paths from book_config.toml.
+def resolve_paths_from_config(lang=None):
+    """Resolve input DOCX and exceptions file paths.
 
+    If lang is provided, auto-discovers files in lang-store/<lang>/.
+    Otherwise falls back to root book_config.toml for backward compatibility.
     Returns (input_docx, exceptions_file) with defaults applied.
     """
+    if lang is None:
+        lang = _get_lang_code()
+
+    if lang:
+        docx_path, exceptions_path = discover_lang_files(lang)
+        # Allow per-lang config to override auto-discovered paths
+        lang_config_file = os.path.join(LANG_STORE_DIR, lang, BOOK_CONFIG_FILE)
+        if os.path.exists(lang_config_file):
+            try:
+                import tomllib
+            except ImportError:
+                import tomli as tomllib  # type: ignore[import-not-found]
+            with open(lang_config_file, "rb") as f:
+                lc = tomllib.load(f)
+            if lc.get("original_book_file"):
+                docx_path = lc["original_book_file"]
+            if lc.get("exceptions_file"):
+                exceptions_path = lc["exceptions_file"]
+        return docx_path, exceptions_path or DEFAULT_EXCEPTIONS_FILE
+
+    # Legacy fallback: read root book_config.toml
     input_docx = DEFAULT_INPUT_DOCX
     exceptions_file = DEFAULT_EXCEPTIONS_FILE
 
@@ -99,48 +156,60 @@ def resolve_paths_from_config():
     return input_docx, exceptions_file
 
 
-def load_book_config(docx_path):
+def load_book_config(docx_path, lang=None):
     """Load book configuration from TOML file or DOCX metadata.
 
-    Tries to load from book_config.toml first, then falls back to
-    extracting metadata from the DOCX file.
+    If lang is provided, reads from lang-store/<lang>/book_config.toml and
+    derives language from the directory name.
+    Otherwise falls back to root book_config.toml.
     """
+    if lang is None:
+        lang = _get_lang_code()
+
     config = {
         "canonical_id": None,
-        "language": "eng",
+        "language": lang or "eng",
         "title": None,
         "is_original": True,
         "original_language": None,
         "pictures_location": "root",  # root, book, or chapter
     }
 
-    # Try loading from book_config.toml
-    if os.path.exists(BOOK_CONFIG_FILE):
-        print(f"Loading configuration from {BOOK_CONFIG_FILE}...")
+    # Determine which config file to load
+    if lang:
+        config_file = os.path.join(LANG_STORE_DIR, lang, BOOK_CONFIG_FILE)
+    else:
+        config_file = BOOK_CONFIG_FILE
+
+    if os.path.exists(config_file):
+        print(f"Loading configuration from {config_file}...")
         try:
             import tomllib  # Python 3.11+
 
-            with open(BOOK_CONFIG_FILE, "rb") as f:
+            with open(config_file, "rb") as f:
                 file_config = tomllib.load(f)
                 config.update(file_config)
-            print(f"✓ Loaded configuration from {BOOK_CONFIG_FILE}")
+            print(f"✓ Loaded configuration from {config_file}")
         except ImportError:
-            # Fallback for Python < 3.11
             try:
                 import tomli as tomllib  # type: ignore[import-not-found]
 
-                with open(BOOK_CONFIG_FILE, "rb") as f:
+                with open(config_file, "rb") as f:
                     file_config = tomllib.load(f)
                     config.update(file_config)
-                print(f"✓ Loaded configuration from {BOOK_CONFIG_FILE}")
+                print(f"✓ Loaded configuration from {config_file}")
             except ImportError:
                 print(
                     "Warning: Could not load TOML (need Python 3.11+ or tomli package)"
                 )
         except Exception as e:
-            print(f"Warning: Could not load {BOOK_CONFIG_FILE}: {e}")
+            print(f"Warning: Could not load {config_file}: {e}")
     else:
-        print(f"No {BOOK_CONFIG_FILE} found, using DOCX metadata fallback...")
+        print(f"No {config_file} found, using DOCX metadata fallback...")
+
+    # Force language from directory name when using per-lang config
+    if lang:
+        config["language"] = lang
 
     # Fallback to DOCX metadata for missing fields
     try:

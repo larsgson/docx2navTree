@@ -8,6 +8,9 @@ INPUT_DOCX := example/sample-book.docx
 EXPORT_DIR := export
 MARKDOWN_DIR := export_md
 
+# Language selection (override with: make build L=fra)
+L ?= eng
+
 # Colors for output
 GREEN := \033[0;32m
 BLUE := \033[0;34m
@@ -37,7 +40,12 @@ help:
 	@echo "Quick start:"
 	@echo "  1. make install-deps       # Install dependencies"
 	@echo "  2. make check-deps         # Verify everything is ready"
-	@echo "  3. make all                # Build everything"
+	@echo "  3. make all L=fra       # Build everything for French"
+	@echo ""
+	@echo "Language selection (default: eng):"
+	@echo "  make build L=fra        # Build French"
+	@echo "  make all L=kir          # Build Kirghiz"
+	@echo "  Available: $(shell ls lang-store/)"
 	@echo ""
 	@echo "Output:"
 	@echo "  - JSON content: $(EXPORT_DIR)/{lang}/{book_id}/"
@@ -88,19 +96,19 @@ install-deps:
 
 # Generate JSON, Markdown, and image manifest (no image file I/O)
 build:
-	@echo "$(BLUE)Generating JSON and Markdown...$(NC)"
+	@echo "$(BLUE)Generating JSON and Markdown for $(L)...$(NC)"
 	@echo ""
-	$(PYTHON) build_book.py
+	LANG_CODE=$(L) $(PYTHON) build_book.py
 	@echo ""
 	@echo "$(GREEN)✅ Build complete!$(NC)"
-	@echo "$(GREEN)   JSON:     $(EXPORT_DIR)/{lang}/{book_id}/$(NC)"
+	@echo "$(GREEN)   JSON:     $(EXPORT_DIR)/$(L)/{book_id}/$(NC)"
 	@echo "$(GREEN)   Markdown: $(MARKDOWN_DIR)/$(NC)"
 
 # Extract and process images from DOCX using the image manifest
 images:
-	@echo "$(BLUE)Processing images...$(NC)"
+	@echo "$(BLUE)Processing images for $(L)...$(NC)"
 	@echo ""
-	$(PYTHON) process_images.py
+	LANG_CODE=$(L) $(PYTHON) process_images.py
 	@echo ""
 	@echo "$(GREEN)✅ Image processing complete!$(NC)"
 	@echo "$(GREEN)   Pictures: $(EXPORT_DIR)/pictures/$(NC)"
@@ -120,10 +128,10 @@ clean:
 
 # Verify all images and content integrity
 verify:
-	@echo "$(BLUE)Verifying content integrity...$(NC)"
+	@echo "$(BLUE)Verifying content integrity for $(L)...$(NC)"
 	@[ -d "$(EXPORT_DIR)" ] || \
 		(echo "$(YELLOW)⚠️  Content not found. Run 'make build' first$(NC)" && exit 1)
-	$(PYTHON) verify_images.py
+	LANG_CODE=$(L) $(PYTHON) verify_images.py
 	@echo ""
 	@echo "$(GREEN)✅ Verification complete$(NC)"
 
@@ -168,8 +176,8 @@ status:
 	@echo ""
 	@echo "Generated content:"
 	@if [ -d "$(EXPORT_DIR)" ]; then \
-		LANG_COUNT=$$(ls -d $(EXPORT_DIR)/*/ 2>/dev/null | grep -v pictures | wc -l | tr -d ' '); \
-		echo "  ✓ $(EXPORT_DIR)/ ($$LANG_COUNT language(s))"; \
+		L_COUNT=$$(ls -d $(EXPORT_DIR)/*/ 2>/dev/null | grep -v pictures | wc -l | tr -d ' '); \
+		echo "  ✓ $(EXPORT_DIR)/ ($$L_COUNT language(s))"; \
 	else \
 		echo "  ✗ $(EXPORT_DIR)/ (not created)"; \
 	fi

@@ -35,7 +35,9 @@
       "Bash(/Users/larsgson/dev/bw/docx2navTree/venv/bin/python3 -c \":*)",
       "Bash(/Users/larsgson/dev/bw/docx2navTree/venv/bin/python3:*)",
       "Bash(make images)",
-      "Bash(make verify)"
+      "Bash(make verify)",
+      "Bash(make build:*)",
+      "Bash(ls -lt \"/Users/larsgson/dev/bw/docx2navTree/lang-store/kir/\"*.docx)"
     ]
   }
 }
